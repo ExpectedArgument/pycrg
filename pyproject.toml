@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycrg"
+version = "1.0.0"
+description = "Unofficial Python bindings for the ASAM OpenCRG C API"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+  { name = "Muvahhid Kilic" }
+]
+keywords = ["opencrg", "asam", "road-surface", "simulation", "crg"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C",
+  "Programming Language :: Python :: 3 :: Only",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+]
+
+[project.urls]
+Homepage = "https://github.com/ExpectedArgument/pycrg"
+Source = "https://github.com/ExpectedArgument/pycrg"
+Issues = "https://github.com/ExpectedArgument/pycrg/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pycrg = [
+  "py.typed",
+  "vendor/opencrg/LICENSE",
+  "vendor/opencrg/NOTICE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.cibuildwheel]
+build = "cp310-* cp311-* cp312-*"
+skip = "*-musllinux_*"
+test-command = "python -c \"import pycrg; print(pycrg.__all__)\""

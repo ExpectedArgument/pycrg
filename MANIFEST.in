@@ -1,0 +1,7 @@
+include README.md
+include CHANGELOG.md
+include requirements-dev.txt
+include LICENSE
+include NOTICE
+recursive-include src/pycrg/vendor/opencrg *
+recursive-exclude tests/data *
