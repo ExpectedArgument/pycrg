@@ -6,6 +6,19 @@ All notable changes to this project will be documented in this file.
 
 - No changes yet.
 
+## [1.0.1] - 2026-07-21
+
+### Fixed
+
+- Made `src/pycrg/_version.py` the single source of truth for the package version instead of a second, unused copy hardcoded in `pyproject.toml`, and exposed it as `pycrg.__version__`
+- Fixed a 32/64-bit varargs format mismatch in the native allocator callback bridges (`calloc`/`realloc`) that passed `unsigned long long` values through the `k`/`O..k` format codes (which read a narrower `unsigned long`), corrupting sizes/pointers on LLP64 platforms such as the Windows wheel build
+- Fixed `pycrg/experimental.py` so its module docstring is no longer discarded by a `from __future__ import annotations` placed before it
+
+### Changed
+
+- Added `cp313-*` to the `cibuildwheel` build matrix so PyPI releases ship prebuilt wheels for Python 3.13
+- Updated `testpypi.yml` GitHub Actions to the same action versions already used by `ci.yml`/`release.yml`
+
 ## [1.0.0] - 2026-03-17
 
 ### Changed

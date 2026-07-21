@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Experimental and unsafe APIs.
 
 This module exposes low-level allocator hooks and direct allocator calls.
 These functions can crash the process if used incorrectly.
 """
+
+from __future__ import annotations
 
 import os
 import warnings
