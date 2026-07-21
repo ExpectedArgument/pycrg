@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pycrg"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Unofficial Python bindings for the ASAM OpenCRG C API"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,6 +33,9 @@ Issues = "https://github.com/ExpectedArgument/pycrg/issues"
 package-dir = {"" = "src"}
 include-package-data = true
 
+[tool.setuptools.dynamic]
+version = {attr = "pycrg._version.__version__"}
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -47,6 +50,6 @@ pycrg = [
 testpaths = ["tests"]
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-*"
+build = "cp310-* cp311-* cp312-* cp313-*"
 skip = "*-musllinux_*"
 test-command = "python -c \"import pycrg; print(pycrg.__all__)\""

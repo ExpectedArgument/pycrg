@@ -1,3 +1,4 @@
+from ._version import __version__
 from .api import (
 	clear_callbacks,
 	clear_message_callback,
@@ -18,6 +19,7 @@ from . import experimental
 from .constants import *
 
 __all__ = [
+	"__version__",
 	"ContactPoint",
 	"DataSet",
 	"RoadSurface",

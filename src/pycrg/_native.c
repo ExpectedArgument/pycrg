@@ -46,7 +46,7 @@ static void* c_calloc_callback_bridge(size_t nmemb, size_t size) {
         return NULL;
     }
 
-    result = PyObject_CallFunction(g_calloc_callback, "kk", (unsigned long long) nmemb, (unsigned long long) size);
+    result = PyObject_CallFunction(g_calloc_callback, "KK", (unsigned long long) nmemb, (unsigned long long) size);
     if (result == NULL) {
         PyErr_Print();
         PyGILState_Release(gil);
@@ -83,7 +83,7 @@ static void* c_realloc_callback_bridge(void* ptr, size_t size) {
         return NULL;
     }
 
-    result = PyObject_CallFunction(g_realloc_callback, "Ok", ptr_obj, (unsigned long long) size);
+    result = PyObject_CallFunction(g_realloc_callback, "OK", ptr_obj, (unsigned long long) size);
     Py_DECREF(ptr_obj);
     if (result == NULL) {
         PyErr_Print();
