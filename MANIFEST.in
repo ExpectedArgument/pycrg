@@ -4,4 +4,10 @@ include requirements-dev.txt
 include LICENSE
 include NOTICE
 recursive-include src/pycrg/vendor/opencrg *
-recursive-exclude tests/data *
+recursive-include tools *.py *.patch
+recursive-include examples *.py
+recursive-include tests *.py
+recursive-include tests/data/crg-txt *.crg *.md
+# the large binary sample is used by optional tests and demos only
+exclude tests/data/sample.crg
+global-exclude *.py[cod] __pycache__ *.so *.pyd
