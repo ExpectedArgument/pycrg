@@ -78,6 +78,9 @@ This release changes the defaults of `open()` and the routing of OpenCRG message
   succeeded (the OpenCRG MATLAB tools accept such data), and each check leaked a contact point
 - The loader released buffers with `free()` instead of `crgFree()` (matters with the experimental
   allocator callbacks)
+- On 32-bit x86 Linux, the consistency check rejected every file: with the x87 FPU, OpenCRG
+  compared its default `check_eps` with a constant evaluated in extended precision. The extension
+  is now built with SSE2 floating point there, as on all other platforms
 
 ### Removed
 

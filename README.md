@@ -29,7 +29,8 @@ pip install "pycrg[numpy]"   # with grid access, vectorised evaluation and writi
 ```
 
 Wheels are available for CPython 3.10–3.14 on Linux (x86_64, i686, aarch64), Windows (x64, x86)
-and macOS (arm64, x86_64). Other platforms build from the source distribution with a C compiler.
+and macOS (arm64, x86_64); the 32-bit x86 wheels need a processor with SSE2. Other platforms build
+from the source distribution with a C compiler.
 
 ## Loading a file
 
