@@ -20,7 +20,6 @@ from pycrg import (
     CP_OPTION_SMOOTH_U_BEGIN,
     CP_OPTION_SMOOTH_U_END,
     CURV_REF_LINE,
-    DataSet,
     GRID_NAN_KEEP_LAST,
     MOD_GRID_NAN_MODE,
     MOD_REF_LINE_OFFSET_PHI,
@@ -43,6 +42,7 @@ from pycrg import (
     MSG_LEVEL_FATAL,
     REF_LINE_CLOSE_TRACK,
     REF_LINE_EXTRAPOLATE,
+    DataSet,
     get_release_info,
     set_message_callback,
     set_message_level,
@@ -50,14 +50,7 @@ from pycrg import (
 
 
 def default_input_file() -> Path:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2] / "tests" / "data" / "sample.crg",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1]
+    return Path(__file__).resolve().parents[2] / "tests" / "data" / "crg-txt" / "handmade_straight.crg"
 
 
 @dataclass
@@ -227,7 +220,7 @@ def main() -> int:
 
     plot_file = None
     if args.plot:
-        plot_file = open("crgPlotData.txt", "w", encoding="utf-8")
+        plot_file = open("crgPlotData.txt", "w", encoding="utf-8")  # noqa: SIM115 - closed at the end
         set_message_level(MSG_LEVEL_FATAL)
 
     n_steps_u = 22
@@ -235,7 +228,7 @@ def main() -> int:
     n_excess_steps_u = 50
     n_excess_steps_v = 10
 
-    dataset = DataSet.open(args.filename)
+    dataset = DataSet.open(args.filename, apply_modifiers=False)
     if not dataset.check():
         raise RuntimeError("could not validate crg data")
 

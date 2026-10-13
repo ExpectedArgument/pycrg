@@ -1,27 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from math import fabs
 from pathlib import Path
 
-from pycrg import DataSet, MSG_LEVEL_NOTICE, set_message_level
+from pycrg import MSG_LEVEL_NOTICE, DataSet, set_message_level
 
 
 def default_input_file() -> Path:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2] / "tests" / "data" / "sample.crg",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1]
+    return Path(__file__).resolve().parents[2] / "tests" / "data" / "crg-txt" / "handmade_straight.crg"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Python port of OpenCRG C demo: EvalZ")
     parser.add_argument("filename", nargs="?", default=str(default_input_file()), help="Input .crg file")
     args = parser.parse_args()
+
+    # show the OpenCRG messages, as the C demos print them
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
     n_steps_u = 20
     n_steps_v = 20
@@ -30,7 +27,7 @@ def main() -> int:
 
     set_message_level(MSG_LEVEL_NOTICE)
 
-    dataset = DataSet.open(args.filename)
+    dataset = DataSet.open(args.filename, apply_modifiers=False)
     if not dataset.check():
         raise RuntimeError("could not validate crg data")
 

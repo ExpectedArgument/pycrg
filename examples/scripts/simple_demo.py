@@ -7,14 +7,7 @@ from pycrg import DataSet, mem_release
 
 
 def default_input_file() -> Path:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2] / "tests" / "data" / "sample.crg",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1]
+    return Path(__file__).resolve().parents[2] / "tests" / "data" / "crg-txt" / "handmade_straight.crg"
 
 
 def main() -> int:
@@ -22,7 +15,7 @@ def main() -> int:
     parser.add_argument("filename", nargs="?", default=str(default_input_file()), help="Input .crg file")
     args = parser.parse_args()
 
-    dataset = DataSet.open(args.filename)
+    dataset = DataSet.open(args.filename, apply_modifiers=False)
     if not dataset.check():
         raise RuntimeError("could not validate crg data")
 

@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
-from pycrg import DataSet, MSG_LEVEL_DEBUG, set_message_level
+from pycrg import MSG_LEVEL_DEBUG, DataSet, set_message_level
 
 
 def default_input_file() -> Path:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2] / "tests" / "data" / "sample.crg",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return candidates[-1]
+    return Path(__file__).resolve().parents[2] / "tests" / "data" / "crg-txt" / "handmade_straight.crg"
 
 
 def main() -> int:
@@ -22,9 +16,12 @@ def main() -> int:
     parser.add_argument("filename", nargs="?", default=str(default_input_file()), help="Input .crg file")
     args = parser.parse_args()
 
+    # show the OpenCRG messages, as the C demos print them
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s: %(message)s")
+
     set_message_level(MSG_LEVEL_DEBUG)
 
-    dataset = DataSet.open(args.filename)
+    dataset = DataSet.open(args.filename, apply_modifiers=False)
     dataset.print_header()
     dataset.print_channel_info()
     dataset.print_road_info()
