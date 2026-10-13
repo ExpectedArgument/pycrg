@@ -6,6 +6,107 @@ All notable changes to this project will be documented in this file.
 
 - No changes yet.
 
+## [2.0.0] - 2026-10-13
+
+This release changes the defaults of `open()` and the routing of OpenCRG messages. See
+"Upgrading from 1.x" below.
+
+### Changed
+
+- `DataSet.open()` and `RoadSurface.open()` now follow the loading sequence of the OpenCRG tools
+  and apply the file's modifiers (`$ROAD_CRG_MODS`) by default. A file without that section gets
+  OpenCRG's default modifiers, which move the start of the reference line to `x = y = z = 0` with
+  heading 0 and replace NaN values at the road borders. New keyword arguments:
+  `open(path, *, apply_modifiers=True, check=False)`
+- OpenCRG messages are passed to the `logging` logger `"pycrg"` instead of being written to C
+  `stderr`; by default only warnings and errors are shown. The messages explaining a failure are
+  attached to the exception instead (`OpenCRGError.messages`) and summarized in its text
+- `set_message_callback()` callbacks may return anything (the value is ignored); an exception
+  raised by the callback is reported through `sys.unraisablehook` instead of being swallowed, and
+  `set_max_warn_messages()` now also limits the messages passed to a callback
+- `print_header()`, `print_channel_info()`, `print_road_info()`, `modifiers_print()` and
+  `options_print()` print to `sys.stdout` (or `file=`) instead of C `stderr`
+- `modifiers_apply()` checks the modifiers first (raising `OpenCRGCheckError` for invalid ones),
+  then applies and removes them, so that applying twice does not apply them twice
+- `DataSet`, `ContactPoint` and `RoadSurface` are no longer dataclasses: they cannot be created
+  from an id, copied or pickled, and compare by identity. Closing a data set closes its contact
+  points; `mem_release()` closes all handles. A data set garbage collected without `close()` is
+  released with a `ResourceWarning`
+- Evaluations refuse non-finite co-ordinates (`OpenCRGEvaluationError`, or `None` from `try_*`)
+- The bundled OpenCRG C library is updated to the current upstream state (release 2.0.1 plus later
+  fixes for the heading of `uv_to_pk`, the reference line integration and the default modifiers),
+  with pycrg patches kept in `tools/vendor_patches` and listed in the README
+- Status changed to "Production/Stable"
+
+### Added
+
+- Exceptions `OpenCRGLoadError`, `OpenCRGCheckError` and `OpenCRGEvaluationError` (subclasses of
+  `OpenCRGError`, a `RuntimeError`), exported from `pycrg` together with `OpenCRGClosedError`.
+  `open()` raises `FileNotFoundError` and `IsADirectoryError` with `errno` set
+- `check(*, raise_on_error=False)`; `format_header()`, `format_channel_info()`,
+  `format_road_info()`, `format_modifiers()` and `format_options()` return OpenCRG's summaries
+  as text
+- `DataSet.header` and `pycrg.read_header()`: the parsed file header (`CrgHeader`, `CrgChannel`),
+  including the comment, `$ROAD_CRG` entries, modifiers, options and channel definitions
+- `DataSet.grid()`: the data set arrays as numpy arrays (`CrgGrid`)
+- Vectorised evaluation with numpy: `uv_to_z_many()`, `xy_to_z_many()`, `uv_to_xy_many()`,
+  `xy_to_uv_many()`, `uv_to_pk_many()`, `xy_to_pk_many()`
+- `pycrg.write()`: writes CRG files in the formats `KRBI`, `KDBI`, `LRFI` and `LDFI`, following
+  the reference writer of the OpenCRG MATLAB tools and validating the input
+- `RoadSurface` offers the check, modifier, option, grid and text methods of its data set and
+  contact point, exposes them as `.dataset` and `.contact_point`, and wraps an open data set with
+  `RoadSurface(dataset)`
+- `DataSet.path`, `closed` properties, `ContactPoint.dataset`, `get_message_level()`
+- Paths may be `str`, `bytes` or `os.PathLike`
+- Optional dependency `pycrg[numpy]`; typed native module (`_native.pyi`); the constants module
+  defines `__all__`
+- Tests for loading, modifiers, messages, lifetime, evaluation, header, grid and writer, using the
+  OpenCRG text samples (`tests/data/crg-txt`)
+
+### Fixed
+
+- File names with non-ASCII characters could not be opened on Windows
+- `$ROAD_CRG_FILE` references are also resolved against the directory of the referencing file
+  (OpenCRG uses the working directory of the process only)
+- The state of a file read before, for example one that failed to load, could change how the next
+  file was read (its modifiers, options and file references); the data set of a failed load leaked
+- Using a closed data set or contact point could act on an unrelated, newer object, because
+  OpenCRG reuses ids
+- Files without data records or with a single cross section crashed the process; evaluation far
+  outside the data with `BORDER_MODE_REFLECT` overflowed an integer
+- The consistency check failed when the global curvature test failed although the local test
+  succeeded (the OpenCRG MATLAB tools accept such data), and each check leaked a contact point
+- The loader released buffers with `free()` instead of `crgFree()` (matters with the experimental
+  allocator callbacks)
+- On 32-bit x86 Linux, the consistency check rejected every file: with the x87 FPU, OpenCRG
+  compared its default `check_eps` with a constant evaluated in extended precision. The extension
+  is now built with SSE2 floating point there, as on all other platforms
+
+### Removed
+
+- The undocumented native functions `open_file`, `close`, `u_range`, `v_range`, `uv_to_z`,
+  `xy_to_z`, `uv_to_xy`, `xy_to_uv`, `msg_set_callback` and `clear_callbacks` of the private
+  module `pycrg._native`
+
+### Packaging
+
+- Wheels for Linux aarch64, macOS x86_64 and CPython 3.14; the wheel tests run the test suite
+- Wheels no longer contain the C sources; the sdist contains the tests and their data
+- CI builds the sdist, builds the wheel from it and runs the tests outside the checkout on Linux
+  (x86_64, aarch64), Windows and macOS, runs ruff and mypy, and checks that the vendored OpenCRG
+  sources match upstream plus the patches
+- PEP 639 license metadata (`license-files`), Python version classifiers and `Typing :: Typed`
+
+### Upgrading from 1.x
+
+- To keep the data exactly as stored in the file, as 1.x did, use
+  `DataSet.open(path, apply_modifiers=False)`. Positions and elevations of files without a
+  `$ROAD_CRG_MODS` section differ otherwise
+- Configure the `"pycrg"` logger (or set a message callback) to see OpenCRG's notices, such as the
+  data set statistics, which 1.x printed to `stderr`
+- Catching `RuntimeError` or `OpenCRGError` keeps working; the new subclasses tell the failures
+  apart
+
 ## [1.0.1] - 2026-07-21
 
 ### Fixed

@@ -41,16 +41,10 @@ crgEvaluv2pk( int cpId, double u, double v, double* phi, double* curv )
         return 0;
 
     /* --- compute the fallback solution --- */
-    cp->u    = u;
-    cp->v    = v;
-    cp->phi  = 0.0;
-    cp->curv = 0.0;
+    *phi  = 0.0;
+    *curv = 0.0;
 
-    retVal = crgDataEvaluv2pk( cp->crgData, &( cp->options ), cp->u, cp->v, &( cp->phi ), &( cp->curv ) );
-
-    /* --- transfer the result --- */
-    *phi  = cp->phi;
-    *curv = cp->curv;
+    retVal = crgDataEvaluv2pk( cp->crgData, &( cp->options ), u, v, phi, curv );
 
     return retVal;
 }
@@ -69,7 +63,7 @@ crgEvalxy2pk( int cpId, double x, double y, double* phi, double* curv )
 
 
 int
-crgDataEvaluv2pk( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u, double v, double* phi, double* curv )
+crgDataEvaluv2pk( const CrgDataStruct *crgData, const CrgOptionsStruct* optionList, double u, double v, double* phi, double* curv )
 {
     size_t indexU = 0;
     size_t nU;
@@ -158,7 +152,7 @@ crgDataEvaluv2pk( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u
         /* NOTE: phi will not be interpolated, since the data set consists
                  of a sequence of straight lines with discrete change of
                  direction at the respective end points                   */
-        *phi = crgData->channelPhi.data[indexU];
+        *phi = crgData->channelPhi.data[indexU + 1];
     }
 
     return 1;

@@ -1,36 +1,232 @@
 # pycrg
 
-Unofficial Python bindings for the ASAM OpenCRG C API.
+Unofficial Python bindings for the [ASAM OpenCRG](https://www.asam.net/standards/detail/opencrg/)
+C API: load, check and evaluate OpenCRG road surfaces, read their headers and grids, and write
+CRG files.
 
-## Features
+```python
+import pycrg
 
-- Full non-visual OpenCRG C API coverage in Python
-- High-level `DataSet`, `ContactPoint`, and `RoadSurface` APIs
-- Stable message callback support
-- Experimental allocator callback support behind `PYCRG_ENABLE_UNSAFE_CALLBACKS=1`
-- Demo scripts and smoke tests
+with pycrg.RoadSurface.open("road.crg") as road:   # load and apply the file's modifiers
+    z = road.uv_to_z(10.0, 0.5)                    # elevation 10 m along, 0.5 m left
+    x, y = road.uv_to_xy(10.0, 0.5)                # the same point in x/y
+```
 
-Exposed functionality includes:
+- `DataSet`, `ContactPoint` and `RoadSurface` cover the non-visual OpenCRG C API: loading,
+  consistency checks, modifiers, contact point options, all evaluations and transforms.
+- Vectorised evaluation with numpy (`uv_to_z_many` etc.), the data set arrays (`grid()`) and the
+  file header (`read_header()`).
+- `write()` creates CRG files in all four OpenCRG data formats.
+- OpenCRG messages go to Python `logging`; failures raise exceptions that carry OpenCRG's reasons.
+- Bundles OpenCRG 2.0.1 with later upstream fixes and a few patches of its own (see
+  [Bundled OpenCRG library](#bundled-opencrg-library)).
 
-- dataset lifecycle and consistency checks
-- dataset metadata printing and range/increment queries
-- dataset modifier set/get/remove/apply/default operations
-- contact point lifecycle and option set/get/remove/default/history operations
-- evaluation and transforms: `(u, v) <-> (x, y)`, `(u, v) -> z`, `(x, y) -> z`, `(u, v)/(x, y) -> (phi, curv)`
-- global controls: OpenCRG release info, memory release, message level and limits
+## Installation
 
-Public callback APIs:
+```bash
+pip install pycrg            # evaluation only
+pip install "pycrg[numpy]"   # with grid access, vectorised evaluation and writing
+```
 
-- Stable/public:
-  - `set_message_callback`
-  - `clear_message_callback`
-- Experimental/unsafe (`pycrg.experimental`):
-  - `set_calloc_callback`
-  - `set_realloc_callback`
-  - `set_free_callback`
-  - `clear_unsafe_callbacks`
+Wheels are available for CPython 3.10–3.14 on Linux (x86_64, i686, aarch64), Windows (x64, x86)
+and macOS (arm64, x86_64); the 32-bit x86 wheels need a processor with SSE2. Other platforms build
+from the source distribution with a C compiler.
 
-Unsafe allocator callbacks are disabled by default and require `PYCRG_ENABLE_UNSAFE_CALLBACKS=1`.
+## Loading a file
+
+`DataSet.open(path, *, apply_modifiers=True, check=False)` follows the sequence of the OpenCRG
+tools: load the file, optionally check it, then apply its modifiers.
+
+- **Modifiers** re-position, scale or repair the data (for example `GRID_NAN_MODE`). They are
+  defined in the file's `$ROAD_CRG_MODS` section. A file without that section gets OpenCRG's
+  *default* modifiers, which move the start of the reference line to `x = y = z = 0` with heading 0
+  and replace NaN values at the road borders by the last valid value. An empty `$ROAD_CRG_MODS`
+  section keeps the data where it is.
+  Pass `apply_modifiers=False` to get the data exactly as stored, for example to set modifiers of
+  your own before calling `modifiers_apply()`.
+- `check=True` runs the OpenCRG consistency check first and raises `OpenCRGCheckError` if it fails.
+
+`path` may be a `str`, `bytes` or `os.PathLike`, including non-ASCII names on Windows.
+
+```python
+from pycrg import DataSet, MOD_REF_LINE_OFFSET_Z, BORDER_MODE_NONE, CP_OPTION_BORDER_MODE_U
+
+with DataSet.open("road.crg", check=True) as dataset:
+    print(dataset.u_range(), dataset.v_range(), dataset.increments())
+    cp = dataset.create_contact_point()
+    cp.option_set_int(CP_OPTION_BORDER_MODE_U, BORDER_MODE_NONE)  # no values beyond the data
+    z = cp.try_uv_to_z(-5.0, 0.0)                                 # None: outside the data
+
+with DataSet.open("road.crg", apply_modifiers=False) as dataset:  # the raw data
+    dataset.modifier_remove_all()
+    dataset.modifier_set_double(MOD_REF_LINE_OFFSET_Z, 10.0)
+    dataset.modifiers_apply()                                     # applied once, then removed
+```
+
+## API overview
+
+### Data sets — `DataSet`
+
+| Member | Purpose |
+|---|---|
+| `DataSet.open(path, *, apply_modifiers=True, check=False)` | load a file (see above) |
+| `close()`, `closed`, `with ...` | release the data set and its contact points |
+| `check(*, raise_on_error=False)` | OpenCRG consistency check; `True` if valid |
+| `u_range()`, `v_range()`, `increments()` | extent and grid spacing |
+| `closed_track_data()` | `(ok, is_closed, u_min, u_max)` of a closed track (NaN if not closed) |
+| `header`, `path` | the parsed file header (`CrgHeader`), the file name |
+| `grid()` | numpy arrays of the data: `u`, `v`, `z`, `x`, `y`, `phi`, `slope`, `bank`, `ref_z`, `elevation` |
+| `modifier_set_int/_double(id, value)`, `modifier_get_int/_double(id)` | modifiers (`MOD_*`) |
+| `modifier_remove(id)`, `modifier_remove_all()`, `modifier_set_default()` | |
+| `modifiers_apply()` | check, apply and remove the current modifiers |
+| `option_set_default()` | reset the options new contact points start with |
+| `create_contact_point()` | a `ContactPoint` for evaluations |
+| `format_header()`, `format_channel_info()`, `format_road_info()`, `format_modifiers()` | OpenCRG's summaries as text |
+| `print_header()`, `print_channel_info()`, `print_road_info()`, `modifiers_print()` | ... printed to `sys.stdout` (or `file=`) |
+
+### Evaluation — `ContactPoint`
+
+A contact point holds evaluation options and a search history; create one per thread or per
+independent query sequence.
+
+| Member | Purpose |
+|---|---|
+| `uv_to_z(u, v)`, `xy_to_z(x, y)` | elevation |
+| `uv_to_xy(u, v)`, `xy_to_uv(x, y)` | transforms between road (u/v) and world (x/y) co-ordinates |
+| `uv_to_pk(u, v)`, `xy_to_pk(x, y)` | heading and curvature of the reference line |
+| `try_*` variants | return `None` instead of raising `OpenCRGEvaluationError` |
+| `*_many(a, b)` variants | numpy arrays in, arrays out (broadcasting); failed points are NaN |
+| `option_set_int/_double(id, value)`, `option_get_int/_double(id)` | options (`CP_OPTION_*`) |
+| `option_remove(id)`, `option_remove_all()`, `set_default_options()`, `set_history(size)` | |
+| `format_options()`, `options_print()` | the current options |
+| `close()`, `closed`, `dataset` | |
+
+Evaluating a position outside the data depends on the border mode options
+(`CP_OPTION_BORDER_MODE_U/V`: `BORDER_MODE_NONE`, `_EX_ZERO`, `_EX_KEEP` (default), `_REPEAT`,
+`_REFLECT`). Non-finite co-ordinates are refused.
+
+### `RoadSurface`
+
+`RoadSurface.open(path, *, apply_modifiers=True, check=False)` creates a data set and one contact
+point, available as `.dataset` and `.contact_point`. It offers the evaluation, option, modifier,
+check, grid and text methods of both, and `close()` closes both. `RoadSurface(dataset)` wraps a data
+set you already have.
+
+### Handles and lifetime
+
+Each `DataSet` and `ContactPoint` owns its native OpenCRG object. They compare by identity and cannot
+be copied or pickled. Closing a data set closes its contact points; closing twice, or in any order,
+is fine. `pycrg.mem_release()` releases everything OpenCRG holds and closes all handles. A data set
+that is garbage collected without `close()` is released with a `ResourceWarning` (like a file) — use
+`with` blocks.
+
+### Header, grid and writing
+
+```python
+header = pycrg.read_header("road.crg")   # without loading the data
+header.data_format                        # "KRBI", "LRFI", ...
+header.road["reference_line_start_x"]     # $ROAD_CRG entries
+header.modifiers                          # None: no $ROAD_CRG_MODS section, {}: an empty one
+header.comment, header.channels, header.file_reference
+
+with pycrg.DataSet.open("road.crg") as dataset:
+    grid = dataset.grid()                 # numpy arrays as used for evaluation
+    grid.z.shape                          # (cross sections, long sections)
+```
+
+`pycrg.write(path, z, du, v, phi=None, *, u0, x0, y0, z0, end_xy, slope, banking, fmt, comment,
+opts, mods, road)` writes a CRG file: `z` is the elevation grid relative to the reference line
+(shape `(nu, nv)`, NaN allowed only at the left and right borders), `du` the spacing of the cross
+sections, `v` the lateral positions of the long sections and `phi` the heading of each of the
+`nu - 1` segments of the reference line (a number for a straight line). `fmt` is `"KRBI"`
+(default), `"KDBI"`, `"LRFI"` or `"LDFI"`. Pass `mods={}` to write an empty modifier section, so that
+readers keep the data where it is instead of applying OpenCRG's default re-positioning. The writer
+follows the reference writer of the OpenCRG MATLAB tools and checks the rules the C loader relies on.
+
+```python
+import numpy as np
+import pycrg
+
+v = np.linspace(-2.0, 2.0, 41)                     # 4 m wide, a long section every 10 cm
+z = np.zeros((2001, v.size))                       # 100 m with a cross section every 5 cm
+headings = np.full(2000, 0.3)                      # a straight line heading 0.3 rad
+pycrg.write("road.crg", z, 0.05, v, headings, x0=500.0, y0=200.0, mods={})
+```
+
+For a reference line given as points `x`, `y` spaced `du` apart, the headings are
+`np.arctan2(np.diff(y), np.diff(x))`.
+
+### Errors
+
+All errors derive from `pycrg.OpenCRGError` (a `RuntimeError`): `OpenCRGLoadError`,
+`OpenCRGCheckError`, `OpenCRGEvaluationError` and `OpenCRGClosedError`. Their `messages` attribute
+holds the OpenCRG messages `(level, text)` that explain the failure. In addition, `open()` raises
+`FileNotFoundError` and `IsADirectoryError` as usual.
+
+### Messages
+
+OpenCRG reports through messages with the levels `MSG_LEVEL_FATAL`, `_WARN`, `_NOTICE`, `_INFO` and
+`_DEBUG`. pycrg passes them to the `logging` logger `"pycrg"` (FATAL as `ERROR`, WARN as `WARNING`,
+NOTICE as `INFO`, INFO and DEBUG as `DEBUG`), so by default only warnings and errors are shown.
+Messages that explain an exception are attached to it instead of being logged.
+
+```python
+import logging
+logging.getLogger("pycrg").setLevel(logging.INFO)    # also show OpenCRG's notices
+
+pycrg.set_message_callback(lambda level, text: ...)  # or route them to a callback
+pycrg.clear_message_callback()
+pycrg.set_message_level(pycrg.MSG_LEVEL_DEBUG)       # what OpenCRG generates (default NOTICE)
+pycrg.set_max_warn_messages(100)                     # limit the number passed on (-1: no limit)
+```
+
+An exception raised by the callback is reported through `sys.unraisablehook` and does not interrupt
+OpenCRG.
+
+### Threads
+
+The OpenCRG library keeps global state and pycrg calls it with the GIL held, so calls never run
+concurrently. Data sets and contact points may be used from several threads, but closing a data set
+while another thread evaluates it is an error of the program. Use a contact point per thread, since
+it keeps a search history.
+
+### Experimental allocator callbacks
+
+`pycrg.experimental` exposes OpenCRG's allocator hooks (`set_calloc_callback`,
+`set_realloc_callback`, `set_free_callback`, `clear_unsafe_callbacks`) and direct `calloc`,
+`realloc` and `free`. They can crash the process if misused and require the environment variable
+`PYCRG_ENABLE_UNSAFE_CALLBACKS=1`.
+
+## Notes on OpenCRG
+
+- **Single precision.** OpenCRG keeps the elevation grid in single precision, also for the double
+  precision formats `KDBI` and `LDFI` (about 1e-9 m at centimetre values). `KRBI` stores exactly
+  what OpenCRG uses.
+- **Text formats.** In `LRFI`/`LDFI` data, a field of exactly `**unused**` reads as 0.0 and any
+  other field that is not a number (such as `**********`) as NaN.
+- **File references.** `$ROAD_CRG_FILE` names another CRG file. OpenCRG resolves a relative name
+  against the working directory of the process; pycrg also tries the directory of the referencing
+  file when there is no such file.
+
+## Bundled OpenCRG library
+
+`src/pycrg/vendor/opencrg` holds the OpenCRG C base library (see `VENDOR.md` there for the upstream
+commit): release 2.0.1 plus the later upstream fixes for the heading of `uv_to_pk`, the
+reference line integration without end point, the default reference point of the modifiers and the
+reset of file references after a failure. pycrg applies these patches on top
+(`tools/vendor_patches`), each marked with `pycrg:` comments in the code:
+
+1. open file names as UTF-8 on Windows (non-ASCII paths);
+2. resolve `$ROAD_CRG_FILE` references against the referencing file as well, and allow references
+   in referenced files;
+3. reset the reader state for every file (modifiers and options of referenced files were ignored
+   after loading certain other files) and release the data set of a failed load;
+4. release loader buffers with `crgFree()` (matters with allocator callbacks);
+5. query the message limit, so that it also applies with a message callback;
+6. let a successful local curvature check pass the check, as in the OpenCRG MATLAB tools;
+7. report a diagnostic of straight reference lines at debug instead of warning level;
+8. refuse files without data records or with a single cross section, which crashed the loader;
+9. avoid an integer overflow in the `BORDER_MODE_REFLECT` evaluation far away from the data.
 
 ## Legal notice
 
@@ -38,84 +234,44 @@ Unsafe allocator callbacks are disabled by default and require `PYCRG_ENABLE_UNS
 
 ASAM OpenCRG® is a registered trademark of ASAM e.V.
 
-This package redistributes parts of OpenCRG under Apache License 2.0 and includes required attribution files:
-
-- `LICENSE`
-- `NOTICE`
-- vendored source license files under `src/pycrg/vendor/opencrg/`
-
-## Installation
-
-```bash
-pip install pycrg
-```
+This package redistributes parts of OpenCRG under the Apache License 2.0 and includes the required
+attribution files: `LICENSE`, `NOTICE` and the license files of the vendored sources in
+`src/pycrg/vendor/opencrg/`. The sample files in `tests/data/crg-txt` are the OpenCRG text samples.
 
 ## Development
 
-### 0) Install development dependencies
-
 ```bash
 pip install -r requirements-dev.txt
+pip install -e .
+pytest
+ruff check src tests tools examples && mypy
 ```
 
-### 1) Refresh vendor snapshot (before building wheel/sdist)
+Refresh the vendored OpenCRG sources from a clone of the OpenCRG repository; the patches in
+`tools/vendor_patches` are applied with `git apply`:
 
 ```bash
-python tools/vendor_snapshot.py --source ../OpenCRG
+python tools/vendor_snapshot.py --source ../OpenCRG          # update
+python tools/vendor_snapshot.py --source ../OpenCRG --check  # verify the committed snapshot
 ```
 
-`--source` may point to any local clone of OpenCRG.
+To change the vendored code, create the snapshot with `--no-patches` in a scratch git repository,
+apply the existing patches, commit the change and add it as a new patch with `git format-patch`.
 
-### 2) Build
+Build the distributions with `python -m build`; release wheels are built with `cibuildwheel`
+(configuration in `pyproject.toml`).
 
-```bash
-python -m build
-```
+### Examples
 
-### 3) Install locally
-
-```bash
-pip install dist/*.whl
-```
+`examples/scripts` contains Python ports of the OpenCRG C demos (`simple_demo.py`,
+`reader_demo.py`, `eval_z_demo.py`, `eval_xyuv_demo.py`, `eval_options_demo.py`,
+`curvature_demo.py`) and further demos (`basic_roadsurface_demo.py`,
+`dataset_contactpoint_demo.py`, `message_callback_demo.py`, `write_and_evaluate_demo.py`, and the
+experimental allocator demos, which need `PYCRG_ENABLE_UNSAFE_CALLBACKS=1`). They use the samples
+in `tests/data/crg-txt` by default and take a CRG file as argument. The C demo ports follow the C
+sequence (load with `apply_modifiers=False`, check, apply the modifiers) and use the `try_*`
+methods, so that evaluation failures are reported and the demo continues.
 
 ## Changelog
 
 Release notes are maintained in [CHANGELOG.md](CHANGELOG.md).
-
-## Minimal usage
-
-```python
-from pycrg import ContactPoint, DataSet, RoadSurface
-
-dataset = DataSet.open("tests/data/sample.crg")
-cp: ContactPoint = dataset.create_contact_point()
-
-print(dataset.u_range())
-print(cp.uv_to_z(0.0, 0.0))
-cp.close()
-dataset.close()
-
-road = RoadSurface.open("tests/data/sample.crg")
-print(road.u_range())
-print(road.v_range())
-print(road.uv_to_z(0.0, 0.0))
-road.close()
-```
-
-## Example scripts
-
-Run from project root after install/build.
-
-- C demo ports (`simple`, `eval_z`, `eval_xyuv`, `eval_options`) are exception-safe: evaluation/conversion failures are handled as warnings and execution continues.
-- This behavior is implemented via non-throwing `try_*` API methods on `ContactPoint` / `RoadSurface`.
-- `python examples/scripts/basic_roadsurface_demo.py`
-- `python examples/scripts/dataset_contactpoint_demo.py`
-- `python examples/scripts/message_callback_demo.py`
-- `python examples/scripts/simple_demo.py`
-- `python examples/scripts/reader_demo.py`
-- `python examples/scripts/eval_z_demo.py`
-- `python examples/scripts/eval_xyuv_demo.py`
-- `python examples/scripts/eval_options_demo.py`
-- `python examples/scripts/curvature_demo.py`
-- `PYCRG_ENABLE_UNSAFE_CALLBACKS=1 python examples/scripts/unsafe_allocator_callbacks_demo.py`
-- `PYCRG_ENABLE_UNSAFE_CALLBACKS=1 python examples/scripts/experimental_allocator_api_demo.py`

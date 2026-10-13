@@ -25,6 +25,7 @@
 
 /* ====== INCLUSIONS ====== */
 #include <stdlib.h>
+#include <stdbool.h>
 
 /* ====== DEFINITIONS ====== */
 
@@ -146,6 +147,10 @@
 /* ====== TYPE DEFINITIONS ====== */
 
 /* ====== METHODS in crgMgr.c ====== */
+#ifdef __cplusplus
+extern "C"
+{
+#endif
     /**
     * destroy the data of the given data set
     * @param dataSetId    identifier of the applicable dataset
@@ -348,6 +353,13 @@
     */
     extern int crgLoaderReadFile( const char* filename );
 
+    /**
+    * suppress the fatal message if the file was not found in function
+    * crgLoaderAddFile and crgLoaderReadFile
+    * @param suppress   true to suppress, otherwise false
+    */
+    extern void crgLoaderSuppressFileNotFoundFatalMsg( bool suppress );
+
 /* ====== METHODS in crgContactPoint.c ====== */
     /**
     * create a new contact point working on the indicated data set
@@ -451,6 +463,12 @@
     * @return 1 if successful, otherwise 0
     */
     extern int crgContactPointSetHistory( int cpId, int histSize );
+
+    /**
+    * set the size of the history for all contact points
+    * @param histSize  the desired size of the history
+    */
+    extern void crgContactPointSetHistoryForAllPoints( int histSize );
 
 /* ====== METHODS in crgEvalxy2uv.c ====== */
     /**
@@ -585,5 +603,9 @@
     * @param func   pointer to the user-defined method accepting message level and text
     */
     extern void crgMsgSetCallback( int ( *func ) ( int level, char* message ) );
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _CRG_BASELIB_H */

@@ -10,24 +10,71 @@ env:
 
 jobs:
   test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.14"]
+        include:
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-24.04-arm
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install build deps
+        run: python -m pip install --upgrade pip build
+      - name: Build sdist, then the wheel from the sdist
+        run: python -m build
+      - name: Install wheel
+        shell: bash
+        run: python -m pip install "$(ls dist/*.whl)[test]"
+      - name: Run tests against the installed wheel
+        shell: bash
+        # run outside the checkout, so that the installed package is tested
+        working-directory: ${{ runner.temp }}
+        run: python -X dev -m pytest -p no:cacheprovider -W error -q "$GITHUB_WORKSPACE/tests"
+      - name: Run tests without numpy
+        if: matrix.python == '3.12'
+        shell: bash
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip uninstall --yes numpy
+          python -m pytest -p no:cacheprovider -q "$GITHUB_WORKSPACE/tests"
+
+  checks:
+    name: Static checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Install build deps
-        run: python -m pip install --upgrade pip build pytest
-      - name: Refresh vendor snapshot (optional)
+      - name: Install tools
+        run: python -m pip install --upgrade pip mypy ruff numpy -c requirements-dev.txt
+      - name: Ruff
+        run: ruff check src tests tools examples
+      - name: Mypy
+        run: mypy
+
+  vendor:
+    name: Vendored OpenCRG is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Clone OpenCRG at the vendored commit
         run: |
-          if [ -d ./OpenCRG ]; then
-            python tools/vendor_snapshot.py --source ./OpenCRG
-          else
-            echo "OpenCRG source not found in CI checkout; using committed vendor snapshot."
-          fi
-      - name: Build sdist and wheel
-        run: python -m build
-      - name: Install wheel
-        run: python -m pip install dist/*.whl
-      - name: Run tests
-        run: PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 pytest -q
+          commit="$(sed -n 's/^- Commit: `\([0-9a-f]*\)`.*/\1/p' src/pycrg/vendor/opencrg/VENDOR.md)"
+          git init -q "$RUNNER_TEMP/OpenCRG"
+          git -C "$RUNNER_TEMP/OpenCRG" fetch -q --depth 1 https://github.com/asam-ev/OpenCRG "$commit"
+          git -C "$RUNNER_TEMP/OpenCRG" checkout -q FETCH_HEAD
+      - name: Check the snapshot and patches
+        run: python tools/vendor_snapshot.py --source "$RUNNER_TEMP/OpenCRG" --check

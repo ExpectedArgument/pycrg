@@ -20,10 +20,15 @@
  * https://www.asam.net/standards/detail/opencrg/
  *
  */
+/* NOTICE: This file has been modified by the pycrg project
+ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
+ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
+ */
 /* ====== INCLUSIONS ====== */
 #include "crgBaseLibPrivate.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -32,6 +37,19 @@
 #include <ctype.h>
 #include <limits.h>
 #include <math.h>
+#include <stdint.h> /* pycrg: SIZE_MAX */
+
+/* pycrg: wide-character file functions, see crgLoaderOpenFile() */
+#ifdef _WIN32
+#    ifndef WIN32_LEAN_AND_MEAN
+#        define WIN32_LEAN_AND_MEAN
+#    endif
+#    ifndef NOMINMAX
+#        define NOMINMAX
+#    endif
+#    include <windows.h>
+#    include <wchar.h>
+#endif
 
 /* ====== DEFINITIONS ====== */
 #define dCrgLoaderMaxTagLen           128
@@ -62,6 +80,7 @@
 #define dOpcodeRefLineOffsetY          22
 #define dOpcodeRefLineOffsetZ          23
 #define dOpcodeRefLineOffsetPhi        24
+#define dOpcodeIncludeReset            25   /* pycrg */
 
 #define dFileSectionNone                0
 #define dFileSectionRoadCrg             1
@@ -138,7 +157,7 @@ static int terminateReader( CrgDataStruct* crgData, int retCode );
 * @param opcode     the opcode resulting from the found callback
 * @return the callback method or NULL if none was found
 */
-static int  ( *scanTagsForCallback( const char* buffer, CrgReaderCallbackStruct* cbs, int* opcode ) )( CrgDataStruct*, const char*, int ) ;
+static int  ( *scanTagsForCallback( const char* buffer, const CrgReaderCallbackStruct* cbs, int* opcode ) )( CrgDataStruct*, const char*, int ) ;
 
 /**
 * check whether the first tag contained in the buffer is and "end-of-section" tag
@@ -375,8 +394,8 @@ static int isLittleEndian( void );
 * check whether the first string begins with the characters of the second, ignoring case;
 * this method was introduced due to incompatibility of strncasecmp with
 * standard c compilers
-* @param str1	string whose begin should is tested for occurrence of str2
-* @param str2   string to be searched for at the begin of str1
+* @param str1 string whose begin should be tested for occurrence of str2
+* @param str2 string to be searched for at the begin of str1
 * @return 1 if strings match, otherwise 0
 */
 static int crgStrBeginsWithStrNoCase( const char* str1, const char* str2 );
@@ -403,9 +422,32 @@ static int decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int co
 */
 static int crgLoaderAddFile( const char* filename, CrgDataStruct** crgData );
 
+/**
+* pycrg: open a file for reading and determine its size
+* @param filename   name of the file; UTF-8 encoded on Windows, a native byte
+*                   string on other platforms
+* @param fileSize   pointer to the resulting size of the file in bytes
+* @return file handle or NULL if the file cannot be opened
+*/
+static FILE* crgLoaderOpenFile( const char* filename, size_t* fileSize );
+
+/**
+* pycrg: add data from a given file to existing data, see crgLoaderAddFile()
+*/
+static int crgLoaderAddFileImpl( const char* filename, CrgDataStruct** crgData );
+
+/**
+* pycrg: find the file a (relative) file reference points to
+* @param reference  the file reference as given in the referencing file
+* @param buffer     buffer for a path which has been built from the reference
+* @param bufferSize size of the buffer
+* @return the reference or the buffer
+*/
+static const char* crgLoaderResolveReference( const char* reference, char* buffer, size_t bufferSize );
+
 /* ====== LOCAL VARIABLES ====== */
 
-static CrgReaderCallbackStruct	sLoaderCallbacksCommon[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksCommon[] =
 {
    { "$ROAD_CRG_MODS",             setSection,         dFileSectionModifiers        },
    { "$ROAD_CRG_OPTS",             setSection,         dFileSectionOptions          },
@@ -419,7 +461,7 @@ static CrgReaderCallbackStruct	sLoaderCallbacksCommon[] =
    { "",                           NULL,               -1                           }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksRoad[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksRoad[] =
 {
    { "reference_line_start_u",     decodeHdrDouble,    dOpcodeRefLineStartU         },
    { "reference_line_start_x",     decodeHdrDouble,    dOpcodeRefLineStartX         },
@@ -453,7 +495,7 @@ static CrgReaderCallbackStruct	sLoaderCallbacksRoad[] =
    { "",                           NULL,               -1                           }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksOpts[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksOpts[] =
 {
    { "border_mode_u",        decodeHdrOpMod, dCrgCpOptionBorderModeU        },
    { "border_offset_u",      decodeHdrOpMod, dCrgCpOptionBorderOffsetU      },
@@ -483,7 +525,7 @@ static CrgReaderCallbackStruct	sLoaderCallbacksOpts[] =
    { "",                     NULL,           -1                             }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksMods[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksMods[] =
 {
    { "scale_z_grid",         decodeHdrOpMod, dCrgModScaleZ                  },
    { "scale_slope",          decodeHdrOpMod, dCrgModScaleSlope              },
@@ -513,14 +555,14 @@ static CrgReaderCallbackStruct	sLoaderCallbacksMods[] =
    { "",                     NULL,           -1                             }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksMpro[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksMpro[] =
 {
    { "proj_nm", decodeHdrOpMod, dOpcodeNone                  },
    { "$" ,      setSection,     dFileSectionNone             },
    { "",        NULL,           -1                           }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksDataDef[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksDataDef[] =
 {
    { "U:", decodeIndependent,  dOpcodeNone                  },
    { "D:", decodeDefined,      dOpcodeNone                  },
@@ -529,7 +571,7 @@ static CrgReaderCallbackStruct	sLoaderCallbacksDataDef[] =
    { "",   NULL,               -1                           }
 };
 
-static CrgReaderCallbackStruct	sLoaderCallbacksFile[] =
+static const CrgReaderCallbackStruct sLoaderCallbacksFile[] =
 {
    { "$",  decodeIncludeFile,  dOpcodeIncludeDone },
    { "",   NULL,               -1                 }
@@ -542,6 +584,8 @@ int mCrgBigEndian =  0;             /* internal data format is little endian per
 static int mFileLevel =  0;      /* level at which current file is being read (for include files) */
 static int mOptLevel  = -1;      /* level at which current options have been defined              */
 static int mModLevel  = -1;      /* level at which current modifiers have been defined            */
+static bool mSuppressFileNotFoundFatalMsg = false; /* suppress the fatal message if the file was not found in function crgLoaderAddFile and crgLoaderReadFile */
+static const char* mCurrentFile = NULL; /* pycrg: name of the file which is currently being read */
 
 /* ====== IMPLEMENTATION ====== */
 static void
@@ -564,7 +608,7 @@ clearTmpData( CrgDataStruct *crgData )
         return;
 
     if ( crgData->admin.recordBuffer )
-        free ( crgData->admin.recordBuffer );
+        crgFree( crgData->admin.recordBuffer ); /* pycrg: allocated with crgCalloc() */
 
     crgData->admin.recordBuffer = NULL;
 }
@@ -626,7 +670,7 @@ terminateReader( CrgDataStruct *crgData, int retCode )
 }
 
 
-static int ( *scanTagsForCallback( const char* buffer, CrgReaderCallbackStruct* cbs, int* opcode ) )( CrgDataStruct*, const char*, int )
+static int ( *scanTagsForCallback( const char* buffer, const CrgReaderCallbackStruct* cbs, int* opcode ) )( CrgDataStruct*, const char*, int )
 {
     const char* checkPtr = buffer;
 
@@ -859,32 +903,32 @@ decodeHdrOpMod( CrgDataStruct* crgData, const char* buffer, int opcode )
 
 
         case dCrgCpOptionWarnCurvGlobal:
-        	if ( !optionEnabled )
-        		break;
-        	{
-        		int iValue = atoi( ++bufPtr );
-        		switch ( iValue )
-        		{
-        		case 1:
-        			crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvGlobal);
-        			break;
-        		}
-        	}
-        	break;
+            if ( !optionEnabled )
+                break;
+            {
+                int iValue = atoi( ++bufPtr );
+                switch ( iValue )
+                {
+                    case 1:
+                        crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvGlobal);
+                        break;
+                }
+            }
+            break;
 
         case dCrgCpOptionWarnCurvLocal:
-        	if ( !optionEnabled )
-        		break;
-        	{
-        		int iValue = atoi( ++bufPtr );
-        		switch ( iValue )
-        		{
-        		case 1:
-        			crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvLocal);
-        			break;
-        		}
-        	}
-        	break;
+            if ( !optionEnabled )
+                break;
+            {
+                int iValue = atoi( ++bufPtr );
+                switch ( iValue )
+                {
+                    case 1:
+                        crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvLocal);
+                        break;
+                }
+            }
+            break;
 
         case dCrgCpOptionBorderOffsetU:
         case dCrgCpOptionBorderOffsetV:
@@ -983,7 +1027,11 @@ decodeHdrOpMod( CrgDataStruct* crgData, const char* buffer, int opcode )
 static int
 setSection( CrgDataStruct* crgData, const char* buffer, int newSection )
 {
-   /* --- changing from none or to none? --- */
+    // setSection is a callback, therefore the parameter list is fixed; buffer
+    // is not used here
+    (void)buffer;
+
+    /* --- changing from none or to none? --- */
     if ( ( crgData->admin.sectionType == dFileSectionNone ) || ( newSection == dFileSectionNone ) )
     {
         crgData->admin.sectionType = newSection;
@@ -1029,12 +1077,22 @@ setSection( CrgDataStruct* crgData, const char* buffer, int newSection )
 static int
 decodeIndependent( CrgDataStruct* crgData, const char* buffer, int code )
 {
+    // decodeIndependent is a callback, therefore the parameter list is fixed;
+    // the parameters are not used here
+    (void)crgData;
+    (void)buffer;
+    (void)code;
+
     return 1;
 }
 
 static int
 decodeDefined( CrgDataStruct* crgData, const char* buffer, int code )
 {
+    // decodeDefined is a callback, therefore the parameter list is fixed;
+    // the parameter code is not used here
+    (void)code;
+
     const char* bufPtr = buffer;
     const char* tmpPtr = NULL;
     size_t i;
@@ -1192,6 +1250,10 @@ decodeDefined( CrgDataStruct* crgData, const char* buffer, int code )
 static int
 decodeDataFormat( CrgDataStruct* crgData, const char* buffer, int code )
 {
+    // decodeDataFormat is a callback, therefore the parameter list is fixed;
+    // the parameter code is not used here
+    (void)code;
+
     const char* bufPtr = buffer;
     char dataFormat[] = "0000";
 
@@ -1402,7 +1464,7 @@ parseFileHeader( CrgDataStruct* crgData, char **dataPtr, size_t* nBytesLeft )
     int    opcode;
     size_t bytesRead;
     int    lineOfFile = 0;
-    CrgReaderCallbackStruct *cbs = sLoaderCallbacksCommon;
+    const CrgReaderCallbackStruct *cbs = sLoaderCallbacksCommon;
 
     /* --- initialize the section indicator --- */
     crgData->admin.sectionType = dFileSectionNone;
@@ -1765,9 +1827,9 @@ parseCenterLine( CrgDataStruct* crgData, char *dataPtr, size_t nBytesLeft )
             crgMsgPrint( dCrgMsgLevelNotice, "MMM: parseCenterLine: read %.3f %% of data\n", ( 100.0f * ( nBytesLeft - srcBytesLeft ) ) / nBytesLeft );
         */
     }
-    
+
     /* --- At least one record required to continue --- */
-  	if (nRec < 1)
+    if (nRec < 1)
     {
         crgMsgPrint(dCrgMsgLevelFatal, "parseCenterLine: zero records could be decoded.\n");
         return 0;
@@ -1967,7 +2029,7 @@ readData( CrgDataStruct* crgData )
 
     /* --- ok, file data copy is no longer needed, get rid of it --- */
     if ( crgData->admin.fileBuffer )
-        free ( crgData->admin.fileBuffer );
+        crgFree( crgData->admin.fileBuffer ); /* pycrg: allocated with crgCalloc() */
 
     crgData->admin.fileBuffer = NULL;
 }
@@ -1975,7 +2037,7 @@ readData( CrgDataStruct* crgData )
 void
 crgLoaderHandleNaNs( CrgDataStruct* crgData, int mode, double offset )
 {
-    int totalNaN   = 0;
+    size_t totalNaN   = 0;
     size_t minIndexLR = crgData->channelV.info.size;
     size_t maxIndexRL = 0;
     size_t i;
@@ -2080,7 +2142,7 @@ crgLoaderHandleNaNs( CrgDataStruct* crgData, int mode, double offset )
 
     crgMsgPrint( dCrgMsgLevelNotice, "crgLoaderHandleNaNs: Summary of NaN handling information:\n" );
     crgMsgPrint( dCrgMsgLevelNotice, "                     NaNs in crg data replaced by constant extrapolation.\n" );
-    crgMsgPrint( dCrgMsgLevelNotice, "                     total NaNs in data [-]:        %d\n", totalNaN );
+    crgMsgPrint( dCrgMsgLevelNotice, "                     total NaNs in data [-]:        %zu\n", totalNaN );
     crgMsgPrint( dCrgMsgLevelNotice, "                     max. NaN count from left [-]:  %ld\n", crgData->channelV.info.size - minIndexLR );
     crgMsgPrint( dCrgMsgLevelNotice, "                     max. NaN count from right [-]: %ld\n", maxIndexRL );
 }
@@ -2121,7 +2183,8 @@ calcRefLine( CrgDataStruct* crgData )
         }
         else
         {
-            crgMsgPrint( dCrgMsgLevelWarn, "calcRefLine: xInfoSize = %ld, yInfoSize = %ld\n", crgData->channelX.info.size, crgData->channelY.info.size );
+            /* pycrg: a diagnostic output, not a warning (it was printed for every straight reference line without end point) */
+            crgMsgPrint( dCrgMsgLevelDebug, "calcRefLine: xInfoSize = %ld, yInfoSize = %ld\n", crgData->channelX.info.size, crgData->channelY.info.size );
             crgData->channelX.info.last = crgData->channelX.data[crgData->channelX.info.size-1];
             crgData->channelY.info.last = crgData->channelY.data[crgData->channelY.info.size-1];
         }
@@ -2181,6 +2244,8 @@ calcRefLine( CrgDataStruct* crgData )
         crgMsgPrint( dCrgMsgLevelDebug, "calcRefLine: using simplified (forward) algorithm.\n" );
 
         /* --- integrate phi -> (x,y) from start to end by simple Euler steps, using simple forward integration --- */
+        crgData->channelX.data[0] = crgData->channelX.info.first;
+        crgData->channelY.data[0] = crgData->channelY.info.first;
         for ( i = 0; i < crgData->channelPhi.info.size-1; i++ )
         {
             crgData->channelX.data[i+1] = crgData->channelX.data[i] + crgData->channelU.info.inc * cos( crgData->channelPhi.data[i+1] );
@@ -2511,62 +2576,68 @@ crgLoaderPrepareData( CrgDataStruct* crgData )
     crgMsgPrint( dCrgMsgLevelDebug, "crgLoaderPrepareData: crgCalcUtilityData() done.\n" );
 }
 
-		int crgLocalCurvature(CrgDataStruct *crgData) {
+static int
+crgLocalCurvature(CrgDataStruct *crgData)
+{
+    int optAsInt;
+    double dx0;
+    double dy0;
+    double dx1;
+    double dy1;
+    double val;
+    double curv = 0.0;
+    int cpId;
+    double z;
+    size_t i;
+    double uStart = crgData->channelU.info.first;
 
-			int optAsInt;
-			int inter;
-			double dx0;
-			double dy0;
-			double dx1;
-			double dy1;
-			double val;
-			double curv = 0.0;
-			int cpId;
-			double z;
-			size_t i;
-			double uStart = crgData->channelU.info.first;
+    /* remember border mode */
+    crgOptionGetInt(&crgData->options, dCrgCpOptionBorderModeV,
+                    &optAsInt);
 
-			/* remember border mode */
-			crgOptionGetInt(&crgData->options, dCrgCpOptionBorderModeV,
-					&optAsInt);
+    crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, 0);
 
-			crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, 0);
+    val = 1.0 / pow(crgData->channelU.info.inc, 3.0);
 
-			val = 1.0 / pow(crgData->channelU.info.inc, 3.0);
+    if ((cpId = crgContactPointCreate(crgData->admin.id)) < 0) {
+        crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, optAsInt); /* pycrg: restore the border mode */
+        crgMsgPrint( dCrgMsgLevelFatal,
+                    "main: could not create contact point.\n");
+        return 0;
+    }
 
-			if ((cpId = crgContactPointCreate(crgData->admin.id)) < 0) {
-				crgMsgPrint( dCrgMsgLevelFatal,
-						"main: could not create contact point.\n");
-				return 0;
-			}
+    for (i = 1; i < crgData->channelX.info.size - 1; i++) {
+        dx0 = crgData->channelX.data[i] - crgData->channelX.data[i - 1];
+        dx1 = crgData->channelX.data[i + 1] - crgData->channelX.data[i];
+        dy0 = crgData->channelY.data[i] - crgData->channelY.data[i - 1];
+        dy1 = crgData->channelY.data[i + 1] - crgData->channelY.data[i];
+        curv = (dx0 * dy1 - dy0 * dx1) * val;
+        if (crgEvaluv2z(cpId, uStart + i * crgData->channelU.info.inc,
+                        1 / curv, &z)) {
+            if (!isnan(z)) {
 
-			for (i = 1; i < crgData->channelX.info.size - 1; i++) {
-				dx0 = crgData->channelX.data[i] - crgData->channelX.data[i - 1];
-				dx1 = crgData->channelX.data[i + 1] - crgData->channelX.data[i];
-				dy0 = crgData->channelY.data[i] - crgData->channelY.data[i - 1];
-				dy1 = crgData->channelY.data[i + 1] - crgData->channelY.data[i];
-				curv = (dx0 * dy1 - dy0 * dx1) * val;
-				if (crgEvaluv2z(cpId, uStart + i * crgData->channelU.info.inc,
-						1 / curv, &z)) {
-					if (!isnan(z)) {
+                crgOptionSetInt(&crgData->options,
+                                dCrgCpOptionBorderModeV, optAsInt);
 
-						crgOptionSetInt(&crgData->options,
-						dCrgCpOptionBorderModeV, optAsInt);
+                crgContactPointDelete(cpId); /* pycrg: do not leak the contact point */
 
-						return 0;
-					}
-				}
-			}
+                return 0;
+            }
+        }
+    }
 
-			crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, optAsInt);
+    crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, optAsInt);
 
-			return 1;
-		}
+    crgContactPointDelete(cpId); /* pycrg: do not leak the contact point */
 
-int
-crgGlobalCurvature(CrgDataStruct* crgData){
-	double vMin = crgData->channelV.info.first;
-	double vMax = crgData->channelV.info.last;
+    return 1;
+}
+
+static int
+crgGlobalCurvature(CrgDataStruct* crgData)
+{
+    double vMin = crgData->channelV.info.first;
+    double vMax = crgData->channelV.info.last;
     double dx0;
     double dy0;
     double dx1;
@@ -2577,55 +2648,55 @@ crgGlobalCurvature(CrgDataStruct* crgData){
     double curv = 0.0;
     double rMin = 0.0;
     double rMax = 0.0;
-	size_t i;
+    size_t i;
 
-	val = 1.0 / pow( crgData->channelU.info.inc, 3.0 );
+    val = 1.0 / pow( crgData->channelU.info.inc, 3.0 );
 
-	  for ( i = 1; i < crgData->channelX.info.size - 1; i++ )
-	  {
-	        dx0  = crgData->channelX.data[i]   - crgData->channelX.data[i-1];
-	        dx1  = crgData->channelX.data[i+1] - crgData->channelX.data[i];
-	        dy0  = crgData->channelY.data[i]   - crgData->channelY.data[i-1];
-	        dy1  = crgData->channelY.data[i+1] - crgData->channelY.data[i];
-	        curv = ( dx0 * dy1 - dy0 * dx1 ) * val;
+    for ( i = 1; i < crgData->channelX.info.size - 1; i++ )
+    {
+        dx0  = crgData->channelX.data[i]   - crgData->channelX.data[i-1];
+        dx1  = crgData->channelX.data[i+1] - crgData->channelX.data[i];
+        dy0  = crgData->channelY.data[i]   - crgData->channelY.data[i-1];
+        dy1  = crgData->channelY.data[i+1] - crgData->channelY.data[i];
+        curv = ( dx0 * dy1 - dy0 * dx1 ) * val;
 
-	        if ( curv < cMin )
-	            cMin = curv;
+        if ( curv < cMin )
+            cMin = curv;
 
-	        if ( curv > cMax )
-	            cMax = curv;
-	  }
+        if ( curv > cMax )
+            cMax = curv;
+    }
 
-	  if(cMin==0.0){
-		  rMin = 0.0;
-	  } else{
-		  rMin = 1/cMin;
-	  }
+    if(cMin==0.0){
+        rMin = 0.0;
+    } else{
+        rMin = 1/cMin;
+    }
 
-	  if(cMax==0.0){
-		  rMax = 0.0;
-	  } else{
-		  rMax = 1/cMax;
-	  }
+    if(cMax==0.0){
+        rMax = 0.0;
+    } else{
+        rMax = 1/cMax;
+    }
 
-	if(rMax!=0.0){
-		if(vMax >= rMax){
-			return 0;
-		}
-	}
+    if(rMax!=0.0){
+        if(vMax >= rMax){
+            return 0;
+        }
+    }
 
-	if(rMin != 0.0){
-		if(rMin >= vMin){
-			return 0;
-		}
-	}
-	return 1;
+    if(rMin != 0.0){
+        if(rMin >= vMin){
+            return 0;
+        }
+    }
+    return 1;
 }
 
 int
 crgCheck( int dataSetId )
 {
-	int optAsInt;
+    int optAsInt;
 
     CrgDataStruct *crgData = crgDataSetAccess( dataSetId );
 
@@ -2658,37 +2729,35 @@ crgCheck( int dataSetId )
 
     /* global curvature check */
     if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvGlobal, &optAsInt )
-    		&& !( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) ) )
+        && !( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) ) )
     {
-    		if(!crgGlobalCurvature(crgData))
-    		{
-        		crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
-        		return 0;
-    		} else {
-    			crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test succeeded.\n" );
-    		}
-
-
+        if(!crgGlobalCurvature(crgData))
+        {
+            crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
+            return 0;
+        } else {
+            crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test succeeded.\n" );
+        }
     }
 
     /* local curvature check */
     if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) )
     {
-
-
-    		if( !crgGlobalCurvature( crgData ) )
-    		{
-    		    if(!crgLocalCurvature(crgData)){
-    		    	crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
-    		    	crgMsgPrint( dCrgMsgLevelWarn, "crgLocaCurvature: Local curvature test failed.\n" );
-    		    	return 0;
-    		    } else{
-    		    	crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
-    		    	return 0;
-    		    }
-    		} else{
-    			crgMsgPrint( dCrgMsgLevelNotice, "Global and local curvature test succeeded.\n" );
-    		}
+        if( !crgGlobalCurvature( crgData ) )
+        {
+            if(!crgLocalCurvature(crgData)){
+                crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
+                crgMsgPrint( dCrgMsgLevelWarn, "crgLocaCurvature: Local curvature test failed.\n" );
+                return 0;
+            } else{
+                /* pycrg: as in the OpenCRG MATLAB tools (crg_check_curvature), the
+                   local test decides when the global test fails; it used to fail
+                   the check even though the local test succeeded */
+                crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test failed, but the local curvature test succeeded.\n" );
+            }
+        } else{
+            crgMsgPrint( dCrgMsgLevelNotice, "Global and local curvature test succeeded.\n" );
+        }
 
     }
 
@@ -2951,8 +3020,8 @@ crgCheckMods( CrgDataStruct* crgData )
         }
         if ( !crgOptionIsSet( &crgData->modifiers, dCrgModRefPointVFrac ) && !crgOptionIsSet( &crgData->modifiers, dCrgModRefPointV ) )
         {
-            crgOptionSetDouble( &crgData->modifiers, dCrgModRefPointVFrac, 0. );
-            crgMsgPrint( dCrgMsgLevelNotice, "crgCheckMods: setting value of modifier \"refpoint_v_fraction\" to 0.0.\n");
+            crgOptionSetDouble( &crgData->modifiers, dCrgModRefPointV, 0. );
+            crgMsgPrint( dCrgMsgLevelNotice, "crgCheckMods: setting value of modifier \"refpoint_v\" to 0.0.\n");
         }
         if( !crgOptionIsSet( &crgData->modifiers, dCrgModRefPointUOffset ) )
             crgOptionSetDouble( &crgData->modifiers, dCrgModRefPointUOffset , 0. );
@@ -3036,10 +3105,24 @@ crgLoaderReadFile( const char* filename )
     /* --- set file level to base level (reading primary file ) --- */
     mFileLevel = 0;
 
+    /* pycrg: forget the options, modifiers and file references of files read
+       before, which could otherwise change how this file is read */
+    mOptLevel = -1;
+    mModLevel = -1;
+    decodeIncludeFile( NULL, NULL, dOpcodeIncludeReset );
+
     if ( !crgLoaderAddFile( filename, &crgData ) )
     {
-        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderReadFile: error loading <%s>\n", filename );
+        if ( !mSuppressFileNotFoundFatalMsg )
+        {
+            crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderReadFile: error loading <%s>\n", filename );
+        }
         terminateReader( crgData, 0 );
+
+        /* pycrg: the data set would otherwise stay in the data set list */
+        if ( crgData )
+            crgDataSetRelease( crgData->admin.id );
+
         return 0;
     }
 
@@ -3047,7 +3130,23 @@ crgLoaderReadFile( const char* filename )
     if ( !crgData->channelV.info.size )
     {
         crgMsgPrint( dCrgMsgLevelDebug, "crgLoaderReadFile: no data available. Terminating reader\n" );
-        return terminateReader( crgData, 0 );
+        terminateReader( crgData, 0 );
+
+        /* pycrg: the data set would otherwise stay in the data set list */
+        crgDataSetRelease( crgData->admin.id );
+
+        return 0;
+    }
+
+    /* pycrg: without a data section (only channel definitions) or with a single
+       cross section, the preparation and the evaluation of the data accessed
+       memory outside the data and could crash */
+    if ( crgData->channelU.info.size < 2 || !crgData->channelZ || !crgData->channelZ[0].data )
+    {
+        crgMsgPrint( dCrgMsgLevelFatal, "crgLoaderReadFile: no data section or less than two cross sections in <%s>\n", filename );
+        terminateReader( crgData, 0 );
+        crgDataSetRelease( crgData->admin.id );
+        return 0;
     }
 
     /* --- prepare the data read from file --- */
@@ -3066,20 +3165,169 @@ crgLoaderReadFile( const char* filename )
     return crgData->admin.id;
 }
 
+void
+crgLoaderSuppressFileNotFoundFatalMsg( bool suppress )
+{
+    mSuppressFileNotFoundFatalMsg = suppress;
+}
+
+#ifdef _WIN32
+/* pycrg: convert a UTF-8 file name to UTF-16; NULL if it is not valid UTF-8 */
+static wchar_t*
+crgLoaderWidenFilename( const char* filename )
+{
+    wchar_t* wideName = NULL;
+    int      length   = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, NULL, 0 );
+
+    if ( length <= 0 )
+        return NULL;
+
+    if ( !( wideName = ( wchar_t* ) malloc( ( size_t ) length * sizeof( wchar_t ) ) ) )
+        return NULL;
+
+    if ( MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, wideName, length ) <= 0 )
+    {
+        free( wideName );
+        return NULL;
+    }
+
+    return wideName;
+}
+#endif
+
+/* pycrg: the narrow CRT functions of Windows interpret file names in the ANSI
+   code page, so names with other characters cannot be opened. File names are
+   therefore treated as UTF-8 and opened with the wide-character functions on
+   Windows; names which are not valid UTF-8 are used as they are. The file size
+   is taken from the same name, and a failure to determine it is reported. */
+static FILE*
+crgLoaderOpenFile( const char* filename, size_t* fileSize )
+{
+    FILE*     fPtr = NULL;
+    long long size = -1;
+
+#ifdef _WIN32
+    struct _stat64 fileStat;
+    wchar_t*       wideName = crgLoaderWidenFilename( filename );
+
+    if ( wideName )
+    {
+        if ( ( fPtr = _wfopen( wideName, L"rb" ) ) && !_wstat64( wideName, &fileStat ) )
+            size = ( long long ) fileStat.st_size;
+        free( wideName );
+    }
+    else if ( ( fPtr = fopen( filename, "rb" ) ) && !_stat64( filename, &fileStat ) )
+        size = ( long long ) fileStat.st_size;
+#else
+    struct stat fileStat;
+
+    if ( ( fPtr = fopen( filename, "rb" ) ) && !stat( filename, &fileStat ) )
+        size = ( long long ) fileStat.st_size;
+#endif
+
+    if ( fPtr && ( size < 0 || ( unsigned long long ) size >= ( unsigned long long ) SIZE_MAX ) )
+    {
+        fclose( fPtr );
+        return NULL;
+    }
+
+    *fileSize = ( size_t ) size;
+
+    return fPtr;
+}
+
+/* pycrg: crgLoaderAddFile() remembers the name of the file being read, so
+   that file references in it can be resolved against its directory */
 static int
 crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
 {
+    const char* previousFile = mCurrentFile;
+    int         result;
+
+    mCurrentFile = filename;
+    result       = crgLoaderAddFileImpl( filename, crgRetData );
+    mCurrentFile = previousFile;
+
+    return result;
+}
+
+/* pycrg: OpenCRG resolves a relative file reference against the current working
+   directory of the process. When there is no such file, the reference is now
+   also tried relative to the directory of the referencing file, so that file
+   references keep working regardless of the working directory. */
+static const char*
+crgLoaderResolveReference( const char* reference, char* buffer, size_t bufferSize )
+{
+    const char* separator = NULL;
+    const char* chrPtr;
+    size_t      dirLength;
+    size_t      fileSize;
+    FILE*       fPtr;
+
+    if ( !mCurrentFile || !reference[0] )
+        return reference;
+
+    /* --- absolute references are used as they are --- */
+#ifdef _WIN32
+    if ( reference[0] == '/' || reference[0] == '\\' || ( reference[0] != '\0' && reference[1] == ':' ) )
+        return reference;
+#else
+    if ( reference[0] == '/' )
+        return reference;
+#endif
+
+    if ( ( fPtr = crgLoaderOpenFile( reference, &fileSize ) ) )
+    {
+        fclose( fPtr );
+        return reference;
+    }
+
+    for ( chrPtr = mCurrentFile; *chrPtr != '\0'; chrPtr++ )
+    {
+#ifdef _WIN32
+        if ( *chrPtr == '/' || *chrPtr == '\\' || *chrPtr == ':' )
+#else
+        if ( *chrPtr == '/' )
+#endif
+            separator = chrPtr;
+    }
+
+    if ( !separator )
+        return reference;
+
+    dirLength = ( size_t ) ( separator - mCurrentFile ) + 1;
+
+    if ( dirLength + strlen( reference ) + 1 > bufferSize )
+        return reference;
+
+    memcpy( buffer, mCurrentFile, dirLength );
+    strcpy( buffer + dirLength, reference );
+
+    if ( !( fPtr = crgLoaderOpenFile( buffer, &fileSize ) ) )
+        return reference;
+
+    fclose( fPtr );
+
+    return buffer;
+}
+
+static int
+crgLoaderAddFileImpl( const char* filename, CrgDataStruct** crgRetData )
+{
     size_t        noBytesRead;
-    struct stat fileStat;
+    size_t        fileSize = 0;  /* pycrg: set by crgLoaderOpenFile() */
     char*         bufPtr;
     size_t        nBytesLeft;
-	FILE*         fPtr = NULL;
+    FILE*         fPtr = NULL;
     CrgDataStruct *crgData = *crgRetData;
 
     /* --- open the file --- */
-    if ( ( fPtr = fopen( filename, "rb" ) ) == NULL )
+    if ( ( fPtr = crgLoaderOpenFile( filename, &fileSize ) ) == NULL ) /* pycrg */
     {
-        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: could not open <%s>\n", filename );
+        if ( !mSuppressFileNotFoundFatalMsg )
+        {
+            crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: could not open <%s>\n", filename );
+        }
         return 0;
     }
 
@@ -3107,8 +3355,7 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
     }
 
     /* --- memory map the file for faster access --- */
-    stat( filename, &fileStat );
-	crgData->admin.fileBuffer = ( char * ) crgCalloc( 1, fileStat.st_size + 1 );
+    crgData->admin.fileBuffer = ( char * ) crgCalloc( 1, fileSize + 1 ); /* pycrg */
 
     if ( !crgData->admin.fileBuffer )
     {
@@ -3117,12 +3364,12 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
         return 0;
     }
 
-	noBytesRead = fread( crgData->admin.fileBuffer, 1, fileStat.st_size, fPtr );
- 	fclose( fPtr );
+    noBytesRead = fread( crgData->admin.fileBuffer, 1, fileSize, fPtr ); /* pycrg */
+    fclose( fPtr );
 
-    if ( noBytesRead < ( size_t ) fileStat.st_size )
+    if ( noBytesRead < fileSize ) /* pycrg */
     {
-        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: read error: only got %zu of %ld bytes\n", noBytesRead, fileStat.st_size );
+        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: read error: only got %zu of %zu bytes\n", noBytesRead, fileSize );
         return 0;
     }
 
@@ -3141,8 +3388,8 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
     /* --- check the data consistency (i.e. header information) --- */
     if ( !checkHeaderConsistency( crgData ) )
         return 0;
-    
-	  /* --- check if file contains enough data records --- */
+
+    /* --- check if file contains enough data records --- */
     if (noBytesRead < (nBytesLeft + (bufPtr - crgData->admin.fileBuffer)))
     {
         crgMsgPrint(dCrgMsgLevelFatal, "crgLoaderAddFile: this file's data section does not contain enough records.\n");
@@ -3153,7 +3400,7 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
     if ( ( crgData->admin.defMask & dCrgDataDefVPos ) )
     {
         if ( !prepareFromPosDef( crgData ) )
-        return 0;
+            return 0;
     }
 
     if ( ( crgData->admin.defMask & dCrgDataDefVIndex ) )
@@ -3224,20 +3471,17 @@ crgLoaderInit( void )
 static int
 decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
 {
-    static char filename[1024];
+    static char filename[1024] = { 0 }; 
     static char envVar[256];
-    static int firstTime = 1;
     int result;
 
     /* --- initialize the structures? --- */
-    if ( firstTime )
-    {
-        firstTime = 0;
-        memset( filename, 0, 1024 * sizeof( char ) );
-    }
-
     switch ( code )
     {
+        case dOpcodeIncludeReset: /* pycrg: forget a partially read file name */
+            memset( filename, 0, sizeof( filename ) );
+            return 1;
+
         case dOpcodeIncludeItem:
             {
                 char* bufPtr       = ( char* ) buffer;
@@ -3298,7 +3542,7 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
 
                         memset( envVar, 0,  256 * sizeof( char ) );
 
-                        if( bufPtrEnvEnd - bufPtrEnv >= sizeof(envVar) )
+                        if( bufPtrEnvEnd - bufPtrEnv >= (ptrdiff_t)sizeof(envVar) )
                         {
                             ptrdiff_t size = bufPtrEnvEnd - bufPtrEnv;
                             int intSize = size > INT_MAX ? INT_MAX : (int)size;
@@ -3344,9 +3588,18 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
         case dOpcodeIncludeDone:
             {
                 CrgAdminStruct adminBackup;
+                char           reference[sizeof( filename )];         /* pycrg */
+                char           resolvedName[2 * sizeof( filename )];  /* pycrg */
+                const char*    includeName;                            /* pycrg */
+
+                /* pycrg: take over the file name and reset it before the referenced
+                   file is read, since that file may contain a file reference itself */
+                memcpy( reference, filename, sizeof( filename ) );
+                memset( filename, 0, sizeof( filename ) );
+                includeName = crgLoaderResolveReference( reference, resolvedName, sizeof( resolvedName ) );
 
                 crgMsgPrint( dCrgMsgLevelNotice, "--------------------------------------\n" );
-                crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: importing file <%s>\n", filename );
+                crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: importing file <%s>\n", includeName );
 
                 /* hold a copy of the administration structure */
                 memcpy( &adminBackup, &( crgData->admin ), sizeof( CrgAdminStruct ) );
@@ -3355,21 +3608,28 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
                 /* load the include file and set the file level accordingly */
                 mFileLevel++;
 
-                result = crgLoaderAddFile( filename, &crgData );
+                result = crgLoaderAddFile( includeName, &crgData ); /* pycrg */
 
                 mFileLevel--;
+
+                /* reset the filename for successive read operations */
+                memset( filename, 0, sizeof( filename ) );
+
+                /* pycrg: release the buffers of the referenced file and keep the
+                   description of its data before the administration structure of
+                   the referencing file is restored, also after a failure */
+                if ( crgData->admin.fileBuffer && crgData->admin.fileBuffer != adminBackup.fileBuffer )
+                    crgFree( crgData->admin.fileBuffer );
+                if ( crgData->admin.recordBuffer && crgData->admin.recordBuffer != adminBackup.recordBuffer )
+                    crgFree( crgData->admin.recordBuffer );
+                adminBackup.defMask |= crgData->admin.defMask;
+                memcpy( &( crgData->admin ), &adminBackup, sizeof( CrgAdminStruct ) );
 
                 if ( !result )
                     return 0;
 
-                /* restore the administration structure */
-                memcpy( &( crgData->admin ), &adminBackup, sizeof( CrgAdminStruct ) );
-
                 crgMsgPrint( dCrgMsgLevelNotice, "--------------------------------------\n" );
                 crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: continuing with previous file\n" );
-
-                /* reset the filename for successive read operations */
-                memset( filename, 0, sizeof( filename ) );
 
                 return 1;
 

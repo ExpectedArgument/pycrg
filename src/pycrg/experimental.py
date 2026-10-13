@@ -31,10 +31,7 @@ class FreeCallback(Protocol):
 
 def _ensure_enabled() -> None:
     if os.getenv(_UNSAFE_ENV) != "1":
-        raise RuntimeError(
-            "Unsafe allocator callbacks are disabled. "
-            f"Set {_UNSAFE_ENV}=1 to enable them."
-        )
+        raise RuntimeError(f"Unsafe allocator callbacks are disabled. Set {_UNSAFE_ENV}=1 to enable them.")
 
 
 def _warn() -> None:

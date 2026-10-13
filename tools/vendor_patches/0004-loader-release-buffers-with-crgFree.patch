@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:14:02 +0000
+Subject: [PATCH] loader: release buffers with crgFree()
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index 1ee374c..dd751f4 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -608,7 +608,7 @@ clearTmpData( CrgDataStruct *crgData )
+         return;
+ 
+     if ( crgData->admin.recordBuffer )
+-        free ( crgData->admin.recordBuffer );
++        crgFree( crgData->admin.recordBuffer ); /* pycrg: allocated with crgCalloc() */
+ 
+     crgData->admin.recordBuffer = NULL;
+ }
+@@ -2029,7 +2029,7 @@ readData( CrgDataStruct* crgData )
+ 
+     /* --- ok, file data copy is no longer needed, get rid of it --- */
+     if ( crgData->admin.fileBuffer )
+-        free ( crgData->admin.fileBuffer );
++        crgFree( crgData->admin.fileBuffer ); /* pycrg: allocated with crgCalloc() */
+ 
+     crgData->admin.fileBuffer = NULL;
+ }

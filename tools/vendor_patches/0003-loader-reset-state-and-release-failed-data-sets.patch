@@ -1,0 +1,69 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:14:02 +0000
+Subject: [PATCH] loader: reset reader state for every file and release failed
+ data sets
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index addc8cd..1ee374c 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -80,6 +80,7 @@
+ #define dOpcodeRefLineOffsetY          22
+ #define dOpcodeRefLineOffsetZ          23
+ #define dOpcodeRefLineOffsetPhi        24
++#define dOpcodeIncludeReset            25   /* pycrg */
+ 
+ #define dFileSectionNone                0
+ #define dFileSectionRoadCrg             1
+@@ -3096,6 +3097,12 @@ crgLoaderReadFile( const char* filename )
+     /* --- set file level to base level (reading primary file ) --- */
+     mFileLevel = 0;
+ 
++    /* pycrg: forget the options, modifiers and file references of files read
++       before, which could otherwise change how this file is read */
++    mOptLevel = -1;
++    mModLevel = -1;
++    decodeIncludeFile( NULL, NULL, dOpcodeIncludeReset );
++
+     if ( !crgLoaderAddFile( filename, &crgData ) )
+     {
+         if ( !mSuppressFileNotFoundFatalMsg )
+@@ -3103,6 +3110,11 @@ crgLoaderReadFile( const char* filename )
+             crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderReadFile: error loading <%s>\n", filename );
+         }
+         terminateReader( crgData, 0 );
++
++        /* pycrg: the data set would otherwise stay in the data set list */
++        if ( crgData )
++            crgDataSetRelease( crgData->admin.id );
++
+         return 0;
+     }
+ 
+@@ -3110,7 +3122,12 @@ crgLoaderReadFile( const char* filename )
+     if ( !crgData->channelV.info.size )
+     {
+         crgMsgPrint( dCrgMsgLevelDebug, "crgLoaderReadFile: no data available. Terminating reader\n" );
+-        return terminateReader( crgData, 0 );
++        terminateReader( crgData, 0 );
++
++        /* pycrg: the data set would otherwise stay in the data set list */
++        crgDataSetRelease( crgData->admin.id );
++
++        return 0;
+     }
+ 
+     /* --- prepare the data read from file --- */
+@@ -3442,6 +3459,10 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
+     /* --- initialize the structures? --- */
+     switch ( code )
+     {
++        case dOpcodeIncludeReset: /* pycrg: forget a partially read file name */
++            memset( filename, 0, sizeof( filename ) );
++            return 1;
++
+         case dOpcodeIncludeItem:
+             {
+                 char* bufPtr       = ( char* ) buffer;

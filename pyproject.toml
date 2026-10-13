@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=69", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,29 +9,51 @@ description = "Unofficial Python bindings for the ASAM OpenCRG C API"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
+license-files = [
+  "LICENSE",
+  "NOTICE",
+  "src/pycrg/vendor/opencrg/LICENSE",
+  "src/pycrg/vendor/opencrg/NOTICE",
+]
 authors = [
   { name = "Muvahhid Kilic" }
 ]
 keywords = ["opencrg", "asam", "road-surface", "simulation", "crg"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
-  "Programming Language :: Python :: 3",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
   "Programming Language :: C",
+  "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: Implementation :: CPython",
   "Topic :: Scientific/Engineering",
+  "Typing :: Typed",
 ]
+
+[project.optional-dependencies]
+# grid access, vectorised evaluation and writing CRG files
+numpy = ["numpy>=1.22"]
+test = ["pytest>=8", "numpy>=1.22"]
 
 [project.urls]
 Homepage = "https://github.com/ExpectedArgument/pycrg"
 Source = "https://github.com/ExpectedArgument/pycrg"
 Issues = "https://github.com/ExpectedArgument/pycrg/issues"
+Changelog = "https://github.com/ExpectedArgument/pycrg/blob/master/CHANGELOG.md"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-include-package-data = true
+# only the files below go into wheels; the C sources are needed for building only
+include-package-data = false
 
 [tool.setuptools.dynamic]
 version = {attr = "pycrg._version.__version__"}
@@ -42,14 +64,37 @@ where = ["src"]
 [tool.setuptools.package-data]
 pycrg = [
   "py.typed",
+  "_native.pyi",
   "vendor/opencrg/LICENSE",
   "vendor/opencrg/NOTICE",
+  "vendor/opencrg/VENDOR.md",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_unreachable = true
+files = ["src/pycrg"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+# keep __all__ and __slots__ grouped by meaning rather than sorted
+ignore = ["RUF022", "RUF023"]
+
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-*"
+build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_*"
-test-command = "python -c \"import pycrg; print(pycrg.__all__)\""
+test-requires = ["pytest", "numpy"]
+test-command = "pytest -p no:cacheprovider {project}/tests"
+
+[[tool.cibuildwheel.overrides]]
+# numpy has no wheels for 32-bit Linux; the tests needing it are skipped
+select = "*-manylinux_i686"
+test-requires = ["pytest"]

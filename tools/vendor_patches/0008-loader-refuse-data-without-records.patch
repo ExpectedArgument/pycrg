@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:46:15 +0000
+Subject: [PATCH] loader: refuse data sets without data records or with a
+ single cross section
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index f302f4a..7b256f0 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -3138,6 +3138,17 @@ crgLoaderReadFile( const char* filename )
+         return 0;
+     }
+ 
++    /* pycrg: without a data section (only channel definitions) or with a single
++       cross section, the preparation and the evaluation of the data accessed
++       memory outside the data and could crash */
++    if ( crgData->channelU.info.size < 2 || !crgData->channelZ || !crgData->channelZ[0].data )
++    {
++        crgMsgPrint( dCrgMsgLevelFatal, "crgLoaderReadFile: no data section or less than two cross sections in <%s>\n", filename );
++        terminateReader( crgData, 0 );
++        crgDataSetRelease( crgData->admin.id );
++        return 0;
++    }
++
+     /* --- prepare the data read from file --- */
+     crgMsgPrint( dCrgMsgLevelDebug, "crgLoaderReadFile: preparing data\n" );
+     crgLoaderPrepareData( crgData );

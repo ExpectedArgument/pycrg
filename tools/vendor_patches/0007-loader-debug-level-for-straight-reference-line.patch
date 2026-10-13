@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:34:56 +0000
+Subject: [PATCH] loader: report the end of a straight reference line at debug
+ level
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index 7ecd9e3..f302f4a 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -2183,7 +2183,8 @@ calcRefLine( CrgDataStruct* crgData )
+         }
+         else
+         {
+-            crgMsgPrint( dCrgMsgLevelWarn, "calcRefLine: xInfoSize = %ld, yInfoSize = %ld\n", crgData->channelX.info.size, crgData->channelY.info.size );
++            /* pycrg: a diagnostic output, not a warning (it was printed for every straight reference line without end point) */
++            crgMsgPrint( dCrgMsgLevelDebug, "calcRefLine: xInfoSize = %ld, yInfoSize = %ld\n", crgData->channelX.info.size, crgData->channelY.info.size );
+             crgData->channelX.info.last = crgData->channelX.data[crgData->channelX.info.size-1];
+             crgData->channelY.info.last = crgData->channelY.data[crgData->channelY.info.size-1];
+         }
