@@ -20,6 +20,10 @@
  * https://www.asam.net/standards/detail/opencrg/
  *
  */
+/* NOTICE: This file has been modified by the pycrg project
+ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
+ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
+ */
 /* ====== INCLUSIONS ====== */
 #include "crgBaseLibPrivate.h"
 #include <math.h>
@@ -37,7 +41,7 @@
 int
 crgEvaluv2z( int cpId, double u, double v, double* z )
 {
-    CrgContactPointStruct* cp;
+    const CrgContactPointStruct* cp;
 
     if ( !( cp = crgContactPointGetFromId( cpId ) ) )
         return 0;
@@ -46,28 +50,22 @@ crgEvaluv2z( int cpId, double u, double v, double* z )
 
 }
 
-int crgEvaluv2zPtr( CrgContactPointStruct *cp, double u, double v, double* z )
+int
+crgEvaluv2zPtr( const CrgContactPointStruct *cp, double u, double v, double* z )
 {
     int retVal = 0;
 
     if ( !cp )
         return 0;
 
-    /* --- compute the fallback solution --- */
-    cp->u = u;
-    cp->v = v;
-
-    retVal = crgDataEvaluv2z( cp->crgData, &( cp->options ), cp->u, cp->v, &( cp->z ) );
-
-    /* --- transfer the result --- */
-    *z = cp->z;
+    retVal = crgDataEvaluv2z( cp->crgData, &( cp->options ), u, v, z );
 
     return retVal;
 }
 
 
 int
-crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u, double v, double* z )
+crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionList, double u, double v, double* z )
 {
     size_t indexU         = 0;
     size_t indexV         = 0;
@@ -181,11 +179,13 @@ crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u,
         {
             double uSize   = crgData->channelU.info.last - crgData->channelU.info.first;
             double maxFrac = uSize / crgData->channelU.info.inc;
-            int    repSeq  = ( int ) ( ( u - crgData->channelU.info.first ) / uSize );
-            int    revert  = abs( repSeq ) % 2;
+            /* pycrg: count the repetitions in double precision; the conversion to int
+               overflowed far away from the data (undefined behaviour) */
+            double repSeq  = floor( fabs( ( u - crgData->channelU.info.first ) / uSize ) );
+            int    revert  = fmod( repSeq, 2.0 ) != 0.0;
 
             fracU = fabs( fracU );
-            fracU -= abs( repSeq ) * maxFrac;
+            fracU -= repSeq * maxFrac;
 
             if ( revert )
                 fracU = maxFrac - fracU;
@@ -281,11 +281,12 @@ crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u,
             {
                 double vSize   = crgData->channelV.info.last - crgData->channelV.info.first;
                 double maxFrac = vSize / crgData->channelV.info.inc;
-                int    repSeq  = ( int ) ( ( v - crgData->channelV.info.first ) / vSize );
-                int    revert  = abs( repSeq ) % 2;
+                /* pycrg: count the repetitions in double precision, see above */
+                double repSeq  = floor( fabs( ( v - crgData->channelV.info.first ) / vSize ) );
+                int    revert  = fmod( repSeq, 2.0 ) != 0.0;
 
                 fracV = fabs( fracV );
-                fracV -= abs( repSeq ) * maxFrac;        /* was vSize, debugged 29.09.2009 by Marius */
+                fracV -= repSeq * maxFrac;        /* was vSize, debugged 29.09.2009 by Marius */
 
                 if ( revert )
                     fracV = maxFrac - fracV;
@@ -387,7 +388,7 @@ crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u,
             else if ( borderModeV == dCrgBorderModeReflect )
             {
                 double vRange  = crgData->channelV.info.last - crgData->channelV.info.first;
-                int    repSeq    = 0;
+                double repSeq    = 0.0; /* pycrg: double precision, see above */
                 int    revert    = 0;
                 double remainder = 0.0;
 
@@ -395,8 +396,8 @@ crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u,
                 if ( vPos > crgData->channelV.info.last )
                 {
                     remainder = fmod( ( vPos - crgData->channelV.info.last ), vRange );
-                    repSeq    = ( int ) ( ( vPos - crgData->channelV.info.last ) / vRange );
-                    revert    = !( abs( repSeq ) % 2 );
+                    repSeq    = floor( fabs( ( vPos - crgData->channelV.info.last ) / vRange ) );
+                    revert    = fmod( repSeq, 2.0 ) == 0.0;
 
                     if ( revert )
                         vPos = crgData->channelV.info.last - remainder;
@@ -406,8 +407,8 @@ crgDataEvaluv2z( CrgDataStruct *crgData, CrgOptionsStruct* optionList, double u,
                 else if ( vPos < crgData->channelV.info.first )
                 {
                     remainder = fmod( ( vPos - crgData->channelV.info.first ), vRange );
-                    repSeq    = ( int ) ( ( vPos - crgData->channelV.info.first ) / vRange );
-                    revert    = abs( repSeq ) % 2;
+                    repSeq    = floor( fabs( ( vPos - crgData->channelV.info.first ) / vRange ) );
+                    revert    = fmod( repSeq, 2.0 ) != 0.0;
 
                     if ( revert )
                         vPos = crgData->channelV.info.last + remainder;

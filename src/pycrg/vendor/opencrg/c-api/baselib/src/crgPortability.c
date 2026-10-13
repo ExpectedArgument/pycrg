@@ -21,6 +21,10 @@
  * https://www.asam.net/standards/detail/opencrg/
  *
  */
+/* NOTICE: This file has been modified by the pycrg project
+ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
+ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
+ */
 /* ====== INCLUSIONS ====== */
 #include "crgBaseLibPrivate.h"
 #include <stdarg.h>
@@ -153,9 +157,20 @@ crgPortSetMaxLogMsgs( int maxNo )
     mMaxLogMsgs = maxNo;
 }
 
+/* pycrg: query the remaining number of messages set by crgMsgSetMaxWarnMsgs(),
+   so that a message callback can apply the same limit (-1 means unlimited) */
+int
+crgPortGetMaxWarnMsgs( void )
+{
+    return mMaxWarnMsgs;
+}
+
 int
 crgPortMsgIsPrintable( int level )
 {
+    // For now the level is ignored
+    (void)level;
+
     return mMaxWarnMsgs != 0;
 }
 

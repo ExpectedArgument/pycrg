@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:34:37 +0000
+Subject: [PATCH] check: accept a successful local curvature test
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index dd751f4..7ecd9e3 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -2599,6 +2599,7 @@ crgLocalCurvature(CrgDataStruct *crgData)
+     val = 1.0 / pow(crgData->channelU.info.inc, 3.0);
+ 
+     if ((cpId = crgContactPointCreate(crgData->admin.id)) < 0) {
++        crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, optAsInt); /* pycrg: restore the border mode */
+         crgMsgPrint( dCrgMsgLevelFatal,
+                     "main: could not create contact point.\n");
+         return 0;
+@@ -2617,6 +2618,8 @@ crgLocalCurvature(CrgDataStruct *crgData)
+                 crgOptionSetInt(&crgData->options,
+                                 dCrgCpOptionBorderModeV, optAsInt);
+ 
++                crgContactPointDelete(cpId); /* pycrg: do not leak the contact point */
++
+                 return 0;
+             }
+         }
+@@ -2624,6 +2627,8 @@ crgLocalCurvature(CrgDataStruct *crgData)
+ 
+     crgOptionSetInt(&crgData->options, dCrgCpOptionBorderModeV, optAsInt);
+ 
++    crgContactPointDelete(cpId); /* pycrg: do not leak the contact point */
++
+     return 1;
+ }
+ 
+@@ -2744,8 +2749,10 @@ crgCheck( int dataSetId )
+                 crgMsgPrint( dCrgMsgLevelWarn, "crgLocaCurvature: Local curvature test failed.\n" );
+                 return 0;
+             } else{
+-                crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
+-                return 0;
++                /* pycrg: as in the OpenCRG MATLAB tools (crg_check_curvature), the
++                   local test decides when the global test fails; it used to fail
++                   the check even though the local test succeeded */
++                crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test failed, but the local curvature test succeeded.\n" );
+             }
+         } else{
+             crgMsgPrint( dCrgMsgLevelNotice, "Global and local curvature test succeeded.\n" );

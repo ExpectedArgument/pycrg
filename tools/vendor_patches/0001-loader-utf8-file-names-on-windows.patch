@@ -1,0 +1,169 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:14:02 +0000
+Subject: [PATCH] loader: open UTF-8 file names on Windows
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index 4634099..b98e727 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -20,6 +20,10 @@
+  * https://www.asam.net/standards/detail/opencrg/
+  *
+  */
++/* NOTICE: This file has been modified by the pycrg project
++ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
++ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
++ */
+ /* ====== INCLUSIONS ====== */
+ #include "crgBaseLibPrivate.h"
+ #include <stdio.h>
+@@ -33,6 +37,19 @@
+ #include <ctype.h>
+ #include <limits.h>
+ #include <math.h>
++#include <stdint.h> /* pycrg: SIZE_MAX */
++
++/* pycrg: wide-character file functions, see crgLoaderOpenFile() */
++#ifdef _WIN32
++#    ifndef WIN32_LEAN_AND_MEAN
++#        define WIN32_LEAN_AND_MEAN
++#    endif
++#    ifndef NOMINMAX
++#        define NOMINMAX
++#    endif
++#    include <windows.h>
++#    include <wchar.h>
++#endif
+ 
+ /* ====== DEFINITIONS ====== */
+ #define dCrgLoaderMaxTagLen           128
+@@ -404,6 +421,15 @@ static int decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int co
+ */
+ static int crgLoaderAddFile( const char* filename, CrgDataStruct** crgData );
+ 
++/**
++* pycrg: open a file for reading and determine its size
++* @param filename   name of the file; UTF-8 encoded on Windows, a native byte
++*                   string on other platforms
++* @param fileSize   pointer to the resulting size of the file in bytes
++* @return file handle or NULL if the file cannot be opened
++*/
++static FILE* crgLoaderOpenFile( const char* filename, size_t* fileSize );
++
+ /* ====== LOCAL VARIABLES ====== */
+ 
+ static const CrgReaderCallbackStruct sLoaderCallbacksCommon[] =
+@@ -3094,18 +3120,83 @@ crgLoaderSuppressFileNotFoundFatalMsg( bool suppress )
+     mSuppressFileNotFoundFatalMsg = suppress;
+ }
+ 
++#ifdef _WIN32
++/* pycrg: convert a UTF-8 file name to UTF-16; NULL if it is not valid UTF-8 */
++static wchar_t*
++crgLoaderWidenFilename( const char* filename )
++{
++    wchar_t* wideName = NULL;
++    int      length   = MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, NULL, 0 );
++
++    if ( length <= 0 )
++        return NULL;
++
++    if ( !( wideName = ( wchar_t* ) malloc( ( size_t ) length * sizeof( wchar_t ) ) ) )
++        return NULL;
++
++    if ( MultiByteToWideChar( CP_UTF8, MB_ERR_INVALID_CHARS, filename, -1, wideName, length ) <= 0 )
++    {
++        free( wideName );
++        return NULL;
++    }
++
++    return wideName;
++}
++#endif
++
++/* pycrg: the narrow CRT functions of Windows interpret file names in the ANSI
++   code page, so names with other characters cannot be opened. File names are
++   therefore treated as UTF-8 and opened with the wide-character functions on
++   Windows; names which are not valid UTF-8 are used as they are. The file size
++   is taken from the same name, and a failure to determine it is reported. */
++static FILE*
++crgLoaderOpenFile( const char* filename, size_t* fileSize )
++{
++    FILE*     fPtr = NULL;
++    long long size = -1;
++
++#ifdef _WIN32
++    struct _stat64 fileStat;
++    wchar_t*       wideName = crgLoaderWidenFilename( filename );
++
++    if ( wideName )
++    {
++        if ( ( fPtr = _wfopen( wideName, L"rb" ) ) && !_wstat64( wideName, &fileStat ) )
++            size = ( long long ) fileStat.st_size;
++        free( wideName );
++    }
++    else if ( ( fPtr = fopen( filename, "rb" ) ) && !_stat64( filename, &fileStat ) )
++        size = ( long long ) fileStat.st_size;
++#else
++    struct stat fileStat;
++
++    if ( ( fPtr = fopen( filename, "rb" ) ) && !stat( filename, &fileStat ) )
++        size = ( long long ) fileStat.st_size;
++#endif
++
++    if ( fPtr && ( size < 0 || ( unsigned long long ) size >= ( unsigned long long ) SIZE_MAX ) )
++    {
++        fclose( fPtr );
++        return NULL;
++    }
++
++    *fileSize = ( size_t ) size;
++
++    return fPtr;
++}
++
+ static int
+ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
+ {
+     size_t        noBytesRead;
+-    struct stat fileStat;
++    size_t        fileSize = 0;  /* pycrg: set by crgLoaderOpenFile() */
+     char*         bufPtr;
+     size_t        nBytesLeft;
+     FILE*         fPtr = NULL;
+     CrgDataStruct *crgData = *crgRetData;
+ 
+     /* --- open the file --- */
+-    if ( ( fPtr = fopen( filename, "rb" ) ) == NULL )
++    if ( ( fPtr = crgLoaderOpenFile( filename, &fileSize ) ) == NULL ) /* pycrg */
+     {
+         if ( !mSuppressFileNotFoundFatalMsg )
+         {
+@@ -3138,8 +3229,7 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
+     }
+ 
+     /* --- memory map the file for faster access --- */
+-    stat( filename, &fileStat );
+-    crgData->admin.fileBuffer = ( char * ) crgCalloc( 1, fileStat.st_size + 1 );
++    crgData->admin.fileBuffer = ( char * ) crgCalloc( 1, fileSize + 1 ); /* pycrg */
+ 
+     if ( !crgData->admin.fileBuffer )
+     {
+@@ -3148,12 +3238,12 @@ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
+         return 0;
+     }
+ 
+-    noBytesRead = fread( crgData->admin.fileBuffer, 1, fileStat.st_size, fPtr );
++    noBytesRead = fread( crgData->admin.fileBuffer, 1, fileSize, fPtr ); /* pycrg */
+     fclose( fPtr );
+ 
+-    if ( noBytesRead < ( size_t ) fileStat.st_size )
++    if ( noBytesRead < fileSize ) /* pycrg */
+     {
+-        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: read error: only got %zu of %ld bytes\n", noBytesRead, fileStat.st_size );
++        crgMsgPrint( dCrgMsgLevelFatal,  "crgLoaderAddFile: read error: only got %zu of %zu bytes\n", noBytesRead, fileSize );
+         return 0;
+     }
+ 

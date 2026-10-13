@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:14:02 +0000
+Subject: [PATCH] portability: query the message limit
+
+
+diff --git a/c-api/baselib/src/crgPortability.c b/c-api/baselib/src/crgPortability.c
+index 20f3dba..0dabdb9 100644
+--- a/c-api/baselib/src/crgPortability.c
++++ b/c-api/baselib/src/crgPortability.c
+@@ -21,6 +21,10 @@
+  * https://www.asam.net/standards/detail/opencrg/
+  *
+  */
++/* NOTICE: This file has been modified by the pycrg project
++ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
++ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
++ */
+ /* ====== INCLUSIONS ====== */
+ #include "crgBaseLibPrivate.h"
+ #include <stdarg.h>
+@@ -153,6 +157,14 @@ crgPortSetMaxLogMsgs( int maxNo )
+     mMaxLogMsgs = maxNo;
+ }
+ 
++/* pycrg: query the remaining number of messages set by crgMsgSetMaxWarnMsgs(),
++   so that a message callback can apply the same limit (-1 means unlimited) */
++int
++crgPortGetMaxWarnMsgs( void )
++{
++    return mMaxWarnMsgs;
++}
++
+ int
+ crgPortMsgIsPrintable( int level )
+ {

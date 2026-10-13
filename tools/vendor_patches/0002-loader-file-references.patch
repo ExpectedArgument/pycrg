@@ -1,0 +1,175 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:14:02 +0000
+Subject: [PATCH] loader: resolve file references relative to the referencing
+ file
+
+
+diff --git a/c-api/baselib/src/crgLoader.c b/c-api/baselib/src/crgLoader.c
+index b98e727..addc8cd 100644
+--- a/c-api/baselib/src/crgLoader.c
++++ b/c-api/baselib/src/crgLoader.c
+@@ -430,6 +430,20 @@ static int crgLoaderAddFile( const char* filename, CrgDataStruct** crgData );
+ */
+ static FILE* crgLoaderOpenFile( const char* filename, size_t* fileSize );
+ 
++/**
++* pycrg: add data from a given file to existing data, see crgLoaderAddFile()
++*/
++static int crgLoaderAddFileImpl( const char* filename, CrgDataStruct** crgData );
++
++/**
++* pycrg: find the file a (relative) file reference points to
++* @param reference  the file reference as given in the referencing file
++* @param buffer     buffer for a path which has been built from the reference
++* @param bufferSize size of the buffer
++* @return the reference or the buffer
++*/
++static const char* crgLoaderResolveReference( const char* reference, char* buffer, size_t bufferSize );
++
+ /* ====== LOCAL VARIABLES ====== */
+ 
+ static const CrgReaderCallbackStruct sLoaderCallbacksCommon[] =
+@@ -570,6 +584,7 @@ static int mFileLevel =  0;      /* level at which current file is being read (f
+ static int mOptLevel  = -1;      /* level at which current options have been defined              */
+ static int mModLevel  = -1;      /* level at which current modifiers have been defined            */
+ static bool mSuppressFileNotFoundFatalMsg = false; /* suppress the fatal message if the file was not found in function crgLoaderAddFile and crgLoaderReadFile */
++static const char* mCurrentFile = NULL; /* pycrg: name of the file which is currently being read */
+ 
+ /* ====== IMPLEMENTATION ====== */
+ static void
+@@ -3185,8 +3200,83 @@ crgLoaderOpenFile( const char* filename, size_t* fileSize )
+     return fPtr;
+ }
+ 
++/* pycrg: crgLoaderAddFile() remembers the name of the file being read, so
++   that file references in it can be resolved against its directory */
+ static int
+ crgLoaderAddFile( const char* filename, CrgDataStruct** crgRetData )
++{
++    const char* previousFile = mCurrentFile;
++    int         result;
++
++    mCurrentFile = filename;
++    result       = crgLoaderAddFileImpl( filename, crgRetData );
++    mCurrentFile = previousFile;
++
++    return result;
++}
++
++/* pycrg: OpenCRG resolves a relative file reference against the current working
++   directory of the process. When there is no such file, the reference is now
++   also tried relative to the directory of the referencing file, so that file
++   references keep working regardless of the working directory. */
++static const char*
++crgLoaderResolveReference( const char* reference, char* buffer, size_t bufferSize )
++{
++    const char* separator = NULL;
++    const char* chrPtr;
++    size_t      dirLength;
++    size_t      fileSize;
++    FILE*       fPtr;
++
++    if ( !mCurrentFile || !reference[0] )
++        return reference;
++
++    /* --- absolute references are used as they are --- */
++#ifdef _WIN32
++    if ( reference[0] == '/' || reference[0] == '\\' || ( reference[0] != '\0' && reference[1] == ':' ) )
++        return reference;
++#else
++    if ( reference[0] == '/' )
++        return reference;
++#endif
++
++    if ( ( fPtr = crgLoaderOpenFile( reference, &fileSize ) ) )
++    {
++        fclose( fPtr );
++        return reference;
++    }
++
++    for ( chrPtr = mCurrentFile; *chrPtr != '\0'; chrPtr++ )
++    {
++#ifdef _WIN32
++        if ( *chrPtr == '/' || *chrPtr == '\\' || *chrPtr == ':' )
++#else
++        if ( *chrPtr == '/' )
++#endif
++            separator = chrPtr;
++    }
++
++    if ( !separator )
++        return reference;
++
++    dirLength = ( size_t ) ( separator - mCurrentFile ) + 1;
++
++    if ( dirLength + strlen( reference ) + 1 > bufferSize )
++        return reference;
++
++    memcpy( buffer, mCurrentFile, dirLength );
++    strcpy( buffer + dirLength, reference );
++
++    if ( !( fPtr = crgLoaderOpenFile( buffer, &fileSize ) ) )
++        return reference;
++
++    fclose( fPtr );
++
++    return buffer;
++}
++
++static int
++crgLoaderAddFileImpl( const char* filename, CrgDataStruct** crgRetData )
+ {
+     size_t        noBytesRead;
+     size_t        fileSize = 0;  /* pycrg: set by crgLoaderOpenFile() */
+@@ -3458,9 +3548,18 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
+         case dOpcodeIncludeDone:
+             {
+                 CrgAdminStruct adminBackup;
++                char           reference[sizeof( filename )];         /* pycrg */
++                char           resolvedName[2 * sizeof( filename )];  /* pycrg */
++                const char*    includeName;                            /* pycrg */
++
++                /* pycrg: take over the file name and reset it before the referenced
++                   file is read, since that file may contain a file reference itself */
++                memcpy( reference, filename, sizeof( filename ) );
++                memset( filename, 0, sizeof( filename ) );
++                includeName = crgLoaderResolveReference( reference, resolvedName, sizeof( resolvedName ) );
+ 
+                 crgMsgPrint( dCrgMsgLevelNotice, "--------------------------------------\n" );
+-                crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: importing file <%s>\n", filename );
++                crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: importing file <%s>\n", includeName );
+ 
+                 /* hold a copy of the administration structure */
+                 memcpy( &adminBackup, &( crgData->admin ), sizeof( CrgAdminStruct ) );
+@@ -3469,19 +3568,26 @@ decodeIncludeFile( CrgDataStruct* crgData, const char* buffer, int code )
+                 /* load the include file and set the file level accordingly */
+                 mFileLevel++;
+ 
+-                result = crgLoaderAddFile( filename, &crgData );
++                result = crgLoaderAddFile( includeName, &crgData ); /* pycrg */
+ 
+                 mFileLevel--;
+ 
+                 /* reset the filename for successive read operations */
+                 memset( filename, 0, sizeof( filename ) );
+ 
++                /* pycrg: release the buffers of the referenced file and keep the
++                   description of its data before the administration structure of
++                   the referencing file is restored, also after a failure */
++                if ( crgData->admin.fileBuffer && crgData->admin.fileBuffer != adminBackup.fileBuffer )
++                    crgFree( crgData->admin.fileBuffer );
++                if ( crgData->admin.recordBuffer && crgData->admin.recordBuffer != adminBackup.recordBuffer )
++                    crgFree( crgData->admin.recordBuffer );
++                adminBackup.defMask |= crgData->admin.defMask;
++                memcpy( &( crgData->admin ), &adminBackup, sizeof( CrgAdminStruct ) );
++
+                 if ( !result )
+                     return 0;
+ 
+-                /* restore the administration structure */
+-                memcpy( &( crgData->admin ), &adminBackup, sizeof( CrgAdminStruct ) );
+-
+                 crgMsgPrint( dCrgMsgLevelNotice, "--------------------------------------\n" );
+                 crgMsgPrint( dCrgMsgLevelNotice, "decodeIncludeFile: continuing with previous file\n" );
+ 

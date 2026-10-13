@@ -39,7 +39,7 @@
 * @param optionType  numeric ID of the option's assumed type
 * @return pointer to the option entry in the contact point's option list
 */
-static CrgOptionEntryStruct* crgOptionGetEntry( CrgOptionsStruct* optionList, unsigned int optionId, unsigned int optionType );
+static CrgOptionEntryStruct* crgOptionGetEntry( CrgOptionsStruct* optionList, unsigned int optionId, int optionType );
 
 /* ====== IMPLEMENTATION ====== */
 
@@ -328,7 +328,7 @@ crgOptionSetDouble( CrgOptionsStruct* optionList, unsigned int optionId, double 
 }
 
 int
-crgOptionGetInt( CrgOptionsStruct* optionList, unsigned int optionId, int *optionValue )
+crgOptionGetInt( const CrgOptionsStruct* optionList, unsigned int optionId, int *optionValue )
 {
     if ( !crgOptionIsSet( optionList, optionId ) )
         return 0;
@@ -339,7 +339,7 @@ crgOptionGetInt( CrgOptionsStruct* optionList, unsigned int optionId, int *optio
 }
 
 int
-crgOptionGetDouble( CrgOptionsStruct* optionList, unsigned int optionId, double *optionValue )
+crgOptionGetDouble( const CrgOptionsStruct* optionList, unsigned int optionId, double *optionValue )
 {
     if ( !crgOptionIsSet( optionList, optionId ) )
         return 0;
@@ -426,7 +426,7 @@ crgOptionsPrint( CrgOptionsStruct* optionList, const char* label )
 }
 
 int
-crgOptionIsSet( CrgOptionsStruct* optionList, unsigned int optionId )
+crgOptionIsSet( const CrgOptionsStruct* optionList, unsigned int optionId )
 {
     if ( !optionList )
         return 0;
@@ -438,7 +438,7 @@ crgOptionIsSet( CrgOptionsStruct* optionList, unsigned int optionId )
 }
 
 int
-crgOptionHasValueInt( CrgOptionsStruct* optionList, unsigned int optionId, int optionValue )
+crgOptionHasValueInt( const CrgOptionsStruct* optionList, unsigned int optionId, int optionValue )
 {
     if ( !crgOptionIsSet( optionList, optionId ) )
         return 0;
@@ -447,7 +447,7 @@ crgOptionHasValueInt( CrgOptionsStruct* optionList, unsigned int optionId, int o
 }
 
 static CrgOptionEntryStruct*
-crgOptionGetEntry( CrgOptionsStruct* optionList, unsigned int optionId, unsigned int optionType )
+crgOptionGetEntry( CrgOptionsStruct* optionList, unsigned int optionId, int optionType )
 {
     if ( !optionList )
     {

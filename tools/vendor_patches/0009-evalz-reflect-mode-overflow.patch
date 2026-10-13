@@ -1,0 +1,85 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: pycrg <pycrg@localhost>
+Date: Tue, 13 Oct 2026 18:46:15 +0000
+Subject: [PATCH] evalz: avoid an integer overflow in the reflect border mode
+
+
+diff --git a/c-api/baselib/src/crgEvalz.c b/c-api/baselib/src/crgEvalz.c
+index 844a396..10af09d 100644
+--- a/c-api/baselib/src/crgEvalz.c
++++ b/c-api/baselib/src/crgEvalz.c
+@@ -20,6 +20,10 @@
+  * https://www.asam.net/standards/detail/opencrg/
+  *
+  */
++/* NOTICE: This file has been modified by the pycrg project
++ * (https://github.com/ExpectedArgument/pycrg). The changes are marked with
++ * "pycrg:" comments; the patches are kept in tools/vendor_patches.
++ */
+ /* ====== INCLUSIONS ====== */
+ #include "crgBaseLibPrivate.h"
+ #include <math.h>
+@@ -175,11 +179,13 @@ crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionLis
+         {
+             double uSize   = crgData->channelU.info.last - crgData->channelU.info.first;
+             double maxFrac = uSize / crgData->channelU.info.inc;
+-            int    repSeq  = ( int ) ( ( u - crgData->channelU.info.first ) / uSize );
+-            int    revert  = abs( repSeq ) % 2;
++            /* pycrg: count the repetitions in double precision; the conversion to int
++               overflowed far away from the data (undefined behaviour) */
++            double repSeq  = floor( fabs( ( u - crgData->channelU.info.first ) / uSize ) );
++            int    revert  = fmod( repSeq, 2.0 ) != 0.0;
+ 
+             fracU = fabs( fracU );
+-            fracU -= abs( repSeq ) * maxFrac;
++            fracU -= repSeq * maxFrac;
+ 
+             if ( revert )
+                 fracU = maxFrac - fracU;
+@@ -275,11 +281,12 @@ crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionLis
+             {
+                 double vSize   = crgData->channelV.info.last - crgData->channelV.info.first;
+                 double maxFrac = vSize / crgData->channelV.info.inc;
+-                int    repSeq  = ( int ) ( ( v - crgData->channelV.info.first ) / vSize );
+-                int    revert  = abs( repSeq ) % 2;
++                /* pycrg: count the repetitions in double precision, see above */
++                double repSeq  = floor( fabs( ( v - crgData->channelV.info.first ) / vSize ) );
++                int    revert  = fmod( repSeq, 2.0 ) != 0.0;
+ 
+                 fracV = fabs( fracV );
+-                fracV -= abs( repSeq ) * maxFrac;        /* was vSize, debugged 29.09.2009 by Marius */
++                fracV -= repSeq * maxFrac;        /* was vSize, debugged 29.09.2009 by Marius */
+ 
+                 if ( revert )
+                     fracV = maxFrac - fracV;
+@@ -381,7 +388,7 @@ crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionLis
+             else if ( borderModeV == dCrgBorderModeReflect )
+             {
+                 double vRange  = crgData->channelV.info.last - crgData->channelV.info.first;
+-                int    repSeq    = 0;
++                double repSeq    = 0.0; /* pycrg: double precision, see above */
+                 int    revert    = 0;
+                 double remainder = 0.0;
+ 
+@@ -389,8 +396,8 @@ crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionLis
+                 if ( vPos > crgData->channelV.info.last )
+                 {
+                     remainder = fmod( ( vPos - crgData->channelV.info.last ), vRange );
+-                    repSeq    = ( int ) ( ( vPos - crgData->channelV.info.last ) / vRange );
+-                    revert    = !( abs( repSeq ) % 2 );
++                    repSeq    = floor( fabs( ( vPos - crgData->channelV.info.last ) / vRange ) );
++                    revert    = fmod( repSeq, 2.0 ) == 0.0;
+ 
+                     if ( revert )
+                         vPos = crgData->channelV.info.last - remainder;
+@@ -400,8 +407,8 @@ crgDataEvaluv2z( const CrgDataStruct *crgData, const CrgOptionsStruct* optionLis
+                 else if ( vPos < crgData->channelV.info.first )
+                 {
+                     remainder = fmod( ( vPos - crgData->channelV.info.first ), vRange );
+-                    repSeq    = ( int ) ( ( vPos - crgData->channelV.info.first ) / vRange );
+-                    revert    = abs( repSeq ) % 2;
++                    repSeq    = floor( fabs( ( vPos - crgData->channelV.info.first ) / vRange ) );
++                    revert    = fmod( repSeq, 2.0 ) != 0.0;
+ 
+                     if ( revert )
+                         vPos = crgData->channelV.info.last + remainder;
