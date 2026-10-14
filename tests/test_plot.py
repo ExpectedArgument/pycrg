@@ -33,6 +33,13 @@ def texts(fig):
     return "\n".join(text.get_text() for text in fig.texts)
 
 
+def file_label(path):
+    """The file name at the bottom of a figure: long names are cut to their
+    last 97 characters, so that the tests pass in deep directories too."""
+    text = str(path)
+    return text if len(text) <= 100 else "..." + text[-97:]
+
+
 def mesh_values(ax, shape):
     """The values of the 2D map of ``ax`` as a ``(nu, nv)`` array."""
     (mesh,) = ax.collections
@@ -89,7 +96,7 @@ def test_show_figures(plt, crg_txt, name, labels):
         assert len(axes) == count
         assert sum(isinstance(ax, Axes3D) for ax in axes) == three_d
         assert fig._suptitle.get_text() == fig.get_label()
-        assert str(crg_txt / name) in texts(fig)  # file name at the bottom
+        assert file_label(crg_txt / name) in texts(fig)  # file name at the bottom
         fig.canvas.draw()  # the layout can be drawn
 
 
@@ -503,7 +510,7 @@ def test_figure_and_surf_helpers(plt, curved):
     with DataSet.open(curved) as dataset:
         fig = plot.figure(dataset, "My figure")
     assert fig.get_label() == "My figure"
-    assert str(curved) in texts(fig)
+    assert file_label(curved) in texts(fig)
     assert tuple(fig.get_size_inches()) == pytest.approx((11.69, 8.27))
     assert "<unknown CRG file name>" in texts(plot.figure())
     long_name = plot.figure(options=plot.FigureOptions(file_label="x" * 300))
