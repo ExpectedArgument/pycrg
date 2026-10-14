@@ -419,7 +419,41 @@ DATASET_VOID_FUNCTION( py_contact_point_delete_all, crgContactPointDeleteAll )
 
 DATASET_RANGE_FUNCTION( py_dataset_get_u_range, crgDataSetGetURange, "u range" )
 DATASET_RANGE_FUNCTION( py_dataset_get_v_range, crgDataSetGetVRange, "v range" )
-DATASET_RANGE_FUNCTION( py_dataset_get_increments, crgDataSetGetIncrements, "increments" )
+
+/* whether long sections defined by position are equally spaced, by the rule
+   of the loader (prepareFromPosDef) */
+static int has_constant_v_spacing( const CrgDataStruct* crg_data ) {
+    const double* v = crg_data->channelV.data;
+    size_t i, n = crg_data->channelV.info.size;
+    double dv, dv_min = 0.0, dv_max = 0.0;
+    if ( v == NULL || n < 2 )
+        return 0;
+    for ( i = 1; i < n; i++ ) {
+        dv = v[i] - v[i - 1];
+        if ( i == 1 || dv < dv_min )
+            dv_min = dv;
+        if ( i == 1 || dv > dv_max )
+            dv_max = dv;
+    }
+    return dv_min > 0.0 && ( dv_max - dv_min ) / dv_min < 1.e-3;
+}
+
+static PyObject* py_dataset_get_increments( PyObject* self, PyObject* arg ) {
+    int id;
+    double u_inc = 0.0;
+    double v_inc = 0.0;
+    const CrgDataStruct* crg_data;
+    if ( !parse_int( arg, &id ) )
+        return NULL;
+    if ( !crgDataSetGetIncrements( id, &u_inc, &v_inc ) )
+        return raise_error( "Failed to query the increments of the data set" );
+    /* for long sections at variable positions, the loader keeps a fallback
+       increment of 0.01 (or the header's value); report 0 instead */
+    crg_data = crgDataSetAccess( id );
+    if ( crg_data != NULL && ( crg_data->admin.defMask & dCrgDataDefVPos ) && !has_constant_v_spacing( crg_data ) )
+        v_inc = 0.0;
+    return Py_BuildValue( "dd", u_inc, v_inc );
+}
 
 static PyObject* py_dataset_get_closed_track( PyObject* self, PyObject* arg ) {
     int id;

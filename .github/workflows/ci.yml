@@ -56,7 +56,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install tools
-        run: python -m pip install --upgrade pip mypy ruff numpy -c requirements-dev.txt
+        run: python -m pip install --upgrade pip mypy ruff numpy matplotlib -c requirements-dev.txt
       - name: Ruff
         run: ruff check src tests tools examples
       - name: Mypy

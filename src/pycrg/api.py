@@ -34,6 +34,10 @@ from .header import CrgHeader, read_header
 if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
+    from matplotlib.figure import Figure
+
+    from .analysis import IndexRange
+    from .plot import FigureOptions
 
     FloatArray: TypeAlias = "np.ndarray[Any, np.dtype[np.float64]]"
     ArrayLike: TypeAlias = "npt.ArrayLike"
@@ -556,6 +560,18 @@ class DataSet(_NotCopyable):
         arrays["u"] = u_min + u_inc * np.arange(nu, dtype=np.float64)
         return CrgGrid(**arrays)
 
+    def show(
+        self, iu: IndexRange | None = None, iv: IndexRange | None = None, *, options: FigureOptions | None = None
+    ) -> list[Figure]:
+        """Show the data set in figures like ``crg_show`` of the OpenCRG tools.
+
+        A shortcut for :func:`pycrg.plot.show`, which requires matplotlib. The
+        figures are returned, not displayed: call ``matplotlib.pyplot.show()``.
+        """
+        from .plot import show
+
+        return show(self, iu, iv, options=options)
+
     # --- modifiers -----------------------------------------------------------
 
     def modifier_set_int(self, modifier_id: int, value: int) -> bool:
@@ -990,6 +1006,14 @@ class RoadSurface(_NotCopyable):
     def grid(self) -> CrgGrid:
         """See :meth:`DataSet.grid`."""
         return self._dataset.grid()
+
+    def show(
+        self, iu: IndexRange | None = None, iv: IndexRange | None = None, *, options: FigureOptions | None = None
+    ) -> list[Figure]:
+        """See :meth:`DataSet.show`."""
+        from .plot import show
+
+        return show(self, iu, iv, options=options)
 
     def format_header(self) -> str:
         """See :meth:`DataSet.format_header`."""

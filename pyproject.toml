@@ -18,7 +18,7 @@ license-files = [
 authors = [
   { name = "Muvahhid Kilic" }
 ]
-keywords = ["opencrg", "asam", "road-surface", "simulation", "crg"]
+keywords = ["opencrg", "asam", "road-surface", "simulation", "crg", "visualization"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
@@ -36,13 +36,19 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Programming Language :: Python :: Implementation :: CPython",
   "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Visualization",
   "Typing :: Typed",
 ]
 
 [project.optional-dependencies]
-# grid access, vectorised evaluation and writing CRG files
+# grid access, vectorised evaluation, writing CRG files, find_peaks, compare
 numpy = ["numpy>=1.22"]
-test = ["pytest>=8", "numpy>=1.22"]
+# visualization (pycrg.plot, pycrg-show)
+plot = ["numpy>=1.22", "matplotlib>=3.8"]
+test = ["pytest>=8", "numpy>=1.22", "matplotlib>=3.8"]
+
+[project.scripts]
+pycrg-show = "pycrg._cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ExpectedArgument/pycrg"
@@ -79,6 +85,11 @@ strict = true
 warn_unreachable = true
 files = ["src/pycrg"]
 
+[[tool.mypy.overrides]]
+# matplotlib's 3D toolkit has no type information
+module = ["mpl_toolkits.*"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 120
 target-version = "py310"
@@ -91,10 +102,15 @@ ignore = ["RUF022", "RUF023"]
 [tool.cibuildwheel]
 build = "cp310-* cp311-* cp312-* cp313-* cp314-*"
 skip = "*-musllinux_*"
-test-requires = ["pytest", "numpy"]
+test-requires = ["pytest", "numpy", "matplotlib"]
 test-command = "pytest -p no:cacheprovider {project}/tests"
 
 [[tool.cibuildwheel.overrides]]
-# numpy has no wheels for 32-bit Linux; the tests needing it are skipped
+# numpy and matplotlib have no wheels for 32-bit Linux; the tests needing them are skipped
 select = "*-manylinux_i686"
 test-requires = ["pytest"]
+
+[[tool.cibuildwheel.overrides]]
+# matplotlib has no wheels for 32-bit Windows; the visualization tests are skipped
+select = "*-win32"
+test-requires = ["pytest", "numpy"]

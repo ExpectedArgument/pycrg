@@ -9,11 +9,13 @@ Typical use::
         z = cp.uv_to_z(10.0, 0.5)
 
 See :class:`DataSet`, :class:`ContactPoint`, :class:`RoadSurface`,
-:func:`read_header` and :func:`write`.
+:func:`read_header`, :func:`write`, :func:`find_peaks`, :func:`compare` and
+:mod:`pycrg.plot` (figures like ``crg_show``, requires matplotlib).
 """
 
 from . import constants, errors, experimental
 from ._version import __version__
+from .analysis import CrgComparison, CrgPeaks, compare, find_peaks
 from .api import (
     ContactPoint,
     CrgGrid,
@@ -48,8 +50,10 @@ __all__ = [
     "__version__",
     "ContactPoint",
     "CrgChannel",
+    "CrgComparison",
     "CrgGrid",
     "CrgHeader",
+    "CrgPeaks",
     "DataSet",
     "MessageCallback",
     "OpenCRGCheckError",
@@ -60,9 +64,11 @@ __all__ = [
     "RoadSurface",
     "clear_callbacks",
     "clear_message_callback",
+    "compare",
     "constants",
     "errors",
     "experimental",
+    "find_peaks",
     "get_message_level",
     "get_release_info",
     "is_message_printable",

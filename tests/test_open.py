@@ -280,3 +280,20 @@ def test_local_curvature_check(write_road, numpy, nan_at_center):
         if not nan_at_center:
             with pytest.raises(OpenCRGCheckError, match="Local curvature test failed"):
                 dataset.check(raise_on_error=True)
+
+
+def test_increments(crg_txt, write_road, numpy):
+    np = numpy
+    # long sections by index (constant spacing)
+    with DataSet.open(crg_txt / "handmade_straight.crg") as dataset:
+        assert dataset.increments() == pytest.approx((1.0, 0.5))
+    # long sections at variable positions: the v increment is 0 (OpenCRG keeps 0.01)
+    with DataSet.open(crg_txt / "handmade_curved_banked_sloped.crg") as dataset:
+        assert dataset.increments() == (1.0, 0.0)
+    variable = write_road("variable.crg", v=np.array([-1.5, -1.0, -0.2, 0.0, 0.2, 1.0, 1.5]))
+    with DataSet.open(variable) as dataset:
+        assert dataset.increments() == (0.5, 0.0)
+    # constant spacing (written as long sections by index)
+    constant = write_road("constant.crg", v=np.linspace(-0.9, 0.9, 7))
+    with DataSet.open(constant) as dataset:
+        assert dataset.increments() == pytest.approx((0.5, 0.3))

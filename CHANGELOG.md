@@ -6,6 +6,40 @@ All notable changes to this project will be documented in this file.
 
 - No changes yet.
 
+## [2.1.0] - 2026-10-14
+
+This release adds the visualization of the OpenCRG MATLAB tools.
+
+### Added
+
+- `pycrg.plot` draws the figures and plots of the OpenCRG MATLAB tools with matplotlib
+  (`pip install "pycrg[plot]"`), named like the MATLAB functions without the `crg_` prefix:
+  `show()` (`crg_show`); the figures `show_refline_map()`, `show_refline_elevation()`,
+  `show_refpnts_and_refline()`, `show_elgrid_cuts_and_limits()`, `show_elgrid_surface()`,
+  `show_road_surface()`, `show_road_uv2surface()`, `show_info()`, `show_peaks()` and
+  `show_isequal()`; the 17 `plot_*` plots, which also draw into axes of your own; `surf()`,
+  `figure()`, `copy_ax2fig()` and `FigureOptions` (`DATA.fopt`). As `crg_show`, `show()` draws long
+  data sets in windows of 1001 cross sections. Large grids are thinned out for drawing, and
+  double-clicking a plot opens it in a figure of its own
+- `DataSet.show()` and `RoadSurface.show()`, shortcuts for `pycrg.plot.show()`
+- The command `pycrg-show` (also `python -m pycrg.plot`) shows a CRG file or writes its figures to
+  image or PDF files; it also finds peaks (`--peaks`), compares with another file (`--compare`, exit
+  status 1 if they differ) and shows reference points (`--refpoints`)
+- `pycrg.find_peaks()` (`crg_peakfinder`) finds isolated spikes and holes in the elevation grid,
+  `pycrg.compare()` (`crg_isequal`) compares two data sets; results `CrgPeaks` and `CrgComparison`
+- Optional dependency `pycrg[plot]` (numpy and matplotlib) and the example
+  `visualization_demo.py`
+
+### Fixed
+
+- `increments()` returned a v increment of 0.01 (or the value of the file header) for long
+  sections at variable positions instead of 0, as documented
+
+### Packaging
+
+- The wheel tests and the type checks include the visualization; on 32-bit Windows and Linux,
+  which have no matplotlib wheels, the visualization tests are skipped
+
 ## [2.0.0] - 2026-10-13
 
 This release changes the defaults of `open()` and the routing of OpenCRG messages. See
