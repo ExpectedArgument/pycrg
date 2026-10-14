@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 import pycrg
+
+# draw without a display; set before any test imports matplotlib
+os.environ["MPLBACKEND"] = "Agg"
 
 DATA = Path(__file__).parent / "data"
 CRG_TXT = DATA / "crg-txt"
@@ -35,6 +39,15 @@ def straight() -> Path:
 @pytest.fixture
 def numpy():
     return pytest.importorskip("numpy")
+
+
+@pytest.fixture
+def plt():
+    """matplotlib.pyplot (tests are skipped without matplotlib); closes all
+    figures afterwards."""
+    pyplot = pytest.importorskip("matplotlib.pyplot")
+    yield pyplot
+    pyplot.close("all")
 
 
 @pytest.fixture

@@ -9,7 +9,8 @@ Typical use::
         z = cp.uv_to_z(10.0, 0.5)
 
 See :class:`DataSet`, :class:`ContactPoint`, :class:`RoadSurface`,
-:func:`read_header`, :func:`write`, :func:`find_peaks` and :func:`compare`.
+:func:`read_header`, :func:`write`, :func:`find_peaks`, :func:`compare` and
+:mod:`pycrg.plot` (figures like ``crg_show``, requires matplotlib).
 """
 
 from . import constants, errors, experimental
