@@ -4,7 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- No changes yet.
+### Fixed
+
+- Four visualization tests failed when the tests were run from a directory with a long path: the
+  figures shorten file names of more than 100 characters, the tests expected the full name
 
 ## [2.1.0] - 2026-10-14
 
