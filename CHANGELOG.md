@@ -4,9 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-Files written by `pycrg.write()` could fail the consistency check of the OpenCRG MATLAB tools
-(`crg_check`, run by `crg_read`, `crg_show` and `crg_write`), and `DataSet.check()` did not run the
-curvature test that the MATLAB tools run by default. See "Upgrading" below.
+- No changes yet.
+
+## [2.2.0] - 2026-10-26
+
+This release makes `pycrg.write()` refuse data that the consistency check of the OpenCRG MATLAB
+tools rejects: files written by earlier versions could fail `crg_check` (run by `crg_read`,
+`crg_show` and `crg_write`). `DataSet.check()` now runs the curvature test that the MATLAB tools run
+by default. See "Upgrading" below.
 
 ### Changed
 
