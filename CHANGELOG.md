@@ -4,10 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+Files written by `pycrg.write()` could fail the consistency check of the OpenCRG MATLAB tools
+(`crg_check`, run by `crg_read`, `crg_show` and `crg_write`), and `DataSet.check()` did not run the
+curvature test that the MATLAB tools run by default. See "Upgrading" below.
+
+### Changed
+
+- `pycrg.write()` refuses data that the OpenCRG consistency check rejects, as the reference writer of
+  the MATLAB tools does, with a `ValueError` that says what to change. New keyword argument
+  `check=True`; `check=False` writes such data anyway. Refused are:
+  - a reference line with a centre of curvature on the road, typically from the headings of
+    adjacent measured points (MATLAB: "global curvature check failed - center of max. reference
+    line curvature ... inside road limits"). The options `warn_curv_global` and `warn_curv_local`
+    control the test, as in OpenCRG
+  - an `end_xy` that the headings do not lead to within 1e-6 of the length of the reference line
+    (MATLAB: "inconsistent position after heading angle backward integration"; the C loader warned
+    about it)
+  - a `road` end altitude that does not fit the elevation change of the reference line (MATLAB:
+    "inconsistent definition of header data "reference_line_start/end_z" and
+    "reference_line_start/end_alt""), longitude or latitude without the other, an end position
+    without a start position, WGS 84 positions out of range or not matching the x/y positions, and
+    a `reference_line_offset_phi` beyond ±π, which the MATLAB tools report as out of range
+- `DataSet.check()` and `open(..., check=True)` run the global curvature test by default, as the
+  OpenCRG specification and the MATLAB tools do: `warn_curv_global = 0` in the file's options skips
+  it, and `warn_curv_local = 1` accepts centres of curvature where the road has no data. The bundled
+  C library ran the tests only when one of these options was 1 and ignored other values. A failed
+  test reports the curvature and the width of the road
+
 ### Fixed
 
+- `pycrg.write()` wrote headings outside -π to π as given, which the MATLAB tools reject; they are
+  written from -π to π now
 - Four visualization tests failed when the tests were run from a directory with a long path: the
   figures shorten file names of more than 100 characters, the tests expected the full name
+
+### Upgrading
+
+- Data that `pycrg.write()` refuses now failed the MATLAB check before. To write it anyway, pass
+  `check=False`. For a reference line from measured points, take the headings over a longer distance
+  than `du` (see the README) and leave `end_xy` out
+- A file whose reference line fails the curvature test now fails `DataSet.check()`; add
+  `warn_curv_global = 0` to its `$ROAD_CRG_OPTS` section to skip the test
 
 ## [2.1.0] - 2026-10-14
 

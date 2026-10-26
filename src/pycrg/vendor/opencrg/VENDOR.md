@@ -19,3 +19,4 @@ patches in `tools/vendor_patches`:
 - `0007-loader-debug-level-for-straight-reference-line.patch`
 - `0008-loader-refuse-data-without-records.patch`
 - `0009-evalz-reflect-mode-overflow.patch`
+- `0010-check-curvature-tests-as-specified.patch`

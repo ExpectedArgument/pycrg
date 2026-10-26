@@ -903,31 +903,12 @@ decodeHdrOpMod( CrgDataStruct* crgData, const char* buffer, int opcode )
 
 
         case dCrgCpOptionWarnCurvGlobal:
-            if ( !optionEnabled )
-                break;
-            {
-                int iValue = atoi( ++bufPtr );
-                switch ( iValue )
-                {
-                    case 1:
-                        crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvGlobal);
-                        break;
-                }
-            }
-            break;
-
         case dCrgCpOptionWarnCurvLocal:
             if ( !optionEnabled )
                 break;
-            {
-                int iValue = atoi( ++bufPtr );
-                switch ( iValue )
-                {
-                    case 1:
-                        crgOptionSetInt( &(crgData->options ), opcode, dCrgCpOptionWarnCurvLocal);
-                        break;
-                }
-            }
+            /* pycrg: keep the value, which crgCheck evaluates (0 disables the test);
+               only the value 1 was kept, as the id of the option */
+            crgOptionSetInt( &( crgData->options ), opcode, atoi( ++bufPtr ) );
             break;
 
         case dCrgCpOptionBorderOffsetU:
@@ -2634,7 +2615,7 @@ crgLocalCurvature(CrgDataStruct *crgData)
 }
 
 static int
-crgGlobalCurvature(CrgDataStruct* crgData)
+crgGlobalCurvature(CrgDataStruct* crgData, double* cMinOut, double* cMaxOut) /* pycrg: report the extreme curvatures */
 {
     double vMin = crgData->channelV.info.first;
     double vMax = crgData->channelV.info.last;
@@ -2667,6 +2648,9 @@ crgGlobalCurvature(CrgDataStruct* crgData)
             cMax = curv;
     }
 
+    *cMinOut = cMin;
+    *cMaxOut = cMax;
+
     if(cMin==0.0){
         rMin = 0.0;
     } else{
@@ -2696,7 +2680,10 @@ crgGlobalCurvature(CrgDataStruct* crgData)
 int
 crgCheck( int dataSetId )
 {
-    int optAsInt;
+    int warnCurvGlobal = 1; /* pycrg: the defaults of the specification */
+    int warnCurvLocal  = 0;
+    double cMin = 0.0;
+    double cMax = 0.0;
 
     CrgDataStruct *crgData = crgDataSetAccess( dataSetId );
 
@@ -2727,38 +2714,28 @@ crgCheck( int dataSetId )
     }
 
 
-    /* global curvature check */
-    if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvGlobal, &optAsInt )
-        && !( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) ) )
+    /* pycrg: the curvature tests as specified and as in the OpenCRG MATLAB tools
+       (crg_check_curvature): the global test unless warn_curv_global is 0, and,
+       if warn_curv_local is positive, the local test when the global test fails;
+       a successful local test lets the check pass. The tests used to run only
+       when one of the options was 1, so not by default. */
+    crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvGlobal, &warnCurvGlobal );
+    crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &warnCurvLocal );
+
+    if ( warnCurvGlobal != 0 )
     {
-        if(!crgGlobalCurvature(crgData))
-        {
-            crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
-            return 0;
-        } else {
+        if ( crgGlobalCurvature( crgData, &cMin, &cMax ) )
             crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test succeeded.\n" );
-        }
-    }
-
-    /* local curvature check */
-    if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) )
-    {
-        if( !crgGlobalCurvature( crgData ) )
+        else if ( warnCurvLocal > 0 && crgLocalCurvature( crgData ) )
+            crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test failed (curvature from %g to %g 1/m), but the local curvature test succeeded.\n", cMin, cMax );
+        else
         {
-            if(!crgLocalCurvature(crgData)){
-                crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed.\n" );
+            crgMsgPrint( dCrgMsgLevelWarn, "crgGlobalCurvature: Global curvature test failed: a centre of curvature of the reference line lies on the road (curvature from %g to %g 1/m, road from v = %g to %g m).\n",
+                         cMin, cMax, crgData->channelV.info.first, crgData->channelV.info.last );
+            if ( warnCurvLocal > 0 )
                 crgMsgPrint( dCrgMsgLevelWarn, "crgLocaCurvature: Local curvature test failed.\n" );
-                return 0;
-            } else{
-                /* pycrg: as in the OpenCRG MATLAB tools (crg_check_curvature), the
-                   local test decides when the global test fails; it used to fail
-                   the check even though the local test succeeded */
-                crgMsgPrint( dCrgMsgLevelNotice, "crgGlobalCurvature: Global curvature test failed, but the local curvature test succeeded.\n" );
-            }
-        } else{
-            crgMsgPrint( dCrgMsgLevelNotice, "Global and local curvature test succeeded.\n" );
+            return 0;
         }
-
     }
 
     return 1;
@@ -2851,8 +2828,19 @@ crgCheckOpts( CrgDataStruct* crgData )
     }
 
 
-    /* not implemented: warn_curv_local  */
-    /* not implemented: warn_curv_global */
+    /* pycrg: the curvature test options, as in crg_check_opts of the MATLAB tools */
+    if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvLocal, &optAsInt ) && optAsInt < -1 )
+    {
+        crgMsgPrint( dCrgMsgLevelFatal, "crgCheckOpts: illegal option data \"warn_curv_local\": %d\n", optAsInt );
+        return 0;
+    }
+
+    if ( crgOptionGetInt( &crgData->options, dCrgCpOptionWarnCurvGlobal, &optAsInt ) && optAsInt < -1 )
+    {
+        crgMsgPrint( dCrgMsgLevelFatal, "crgCheckOpts: illegal option data \"warn_curv_global\": %d\n", optAsInt );
+        return 0;
+    }
+
     /* not implemented: log_msgs         */
     /* not implemented: log_eval         */
     /* not implemented: log_eval_freq    */

@@ -50,6 +50,9 @@ tools: load the file, optionally check it, then apply its modifiers.
   Pass `apply_modifiers=False` to get the data exactly as stored, for example to set modifiers of
   your own before calling `modifiers_apply()`.
 - `check=True` runs the OpenCRG consistency check first and raises `OpenCRGCheckError` if it fails.
+  It checks the options and modifiers and, as the OpenCRG specification and MATLAB tools do, that no
+  centre of curvature of the reference line lies on the road (see
+  [the curvature test](#header-grid-and-writing)).
 
 `path` may be a `str`, `bytes` or `os.PathLike`, including non-ASCII names on Windows.
 
@@ -76,7 +79,7 @@ with DataSet.open("road.crg", apply_modifiers=False) as dataset:  # the raw data
 |---|---|
 | `DataSet.open(path, *, apply_modifiers=True, check=False)` | load a file (see above) |
 | `close()`, `closed`, `with ...` | release the data set and its contact points |
-| `check(*, raise_on_error=False)` | OpenCRG consistency check; `True` if valid |
+| `check(*, raise_on_error=False)` | OpenCRG consistency check (options, modifiers, curvature); `True` if valid |
 | `u_range()`, `v_range()`, `increments()` | extent and grid spacing (v increment 0: long sections at variable spacing) |
 | `closed_track_data()` | `(ok, is_closed, u_min, u_max)` of a closed track (NaN if not closed) |
 | `header`, `path` | the parsed file header (`CrgHeader`), the file name |
@@ -141,13 +144,30 @@ with pycrg.DataSet.open("road.crg") as dataset:
 ```
 
 `pycrg.write(path, z, du, v, phi=None, *, u0, x0, y0, z0, end_xy, slope, banking, fmt, comment,
-opts, mods, road)` writes a CRG file: `z` is the elevation grid relative to the reference line
-(shape `(nu, nv)`, NaN allowed only at the left and right borders), `du` the spacing of the cross
-sections, `v` the lateral positions of the long sections and `phi` the heading of each of the
-`nu - 1` segments of the reference line (a number for a straight line). `fmt` is `"KRBI"`
+opts, mods, road, check=True)` writes a CRG file: `z` is the elevation grid relative to the
+reference line (shape `(nu, nv)`, NaN allowed only at the left and right borders), `du` the spacing
+of the cross sections, `v` the lateral positions of the long sections and `phi` the heading of each
+of the `nu - 1` segments of the reference line (a number for a straight line). `fmt` is `"KRBI"`
 (default), `"KDBI"`, `"LRFI"` or `"LDFI"`. Pass `mods={}` to write an empty modifier section, so that
 readers keep the data where it is instead of applying OpenCRG's default re-positioning. The writer
 follows the reference writer of the OpenCRG MATLAB tools and checks the rules the C loader relies on.
+
+Like that reference writer, which runs the consistency check `crg_check` first, `write` refuses data
+the check rejects, with a `ValueError` that says what to change (`check=False` writes it anyway):
+
+- **Curvature.** No centre of curvature of the reference line may lie on the road, where the road
+  surface would overlap itself: from one segment to the next, the heading may change by at most
+  about `du` divided by the distance of the road border from the reference line. The options
+  `warn_curv_global` (0 skips this test) and `warn_curv_local` (1 accepts centres of curvature where
+  the road has no data, NaN) control it, in the file and in `DataSet.check()` alike.
+- **End point.** `end_xy` must be the end the headings lead to, within 1e-6 of the length of the
+  reference line. It removes the drift of single precision headings; a measured end point does not
+  fit.
+- **WGS 84 positions** in `road`: longitude and latitude come in pairs and must match the x/y
+  positions, and an end altitude must differ from the start altitude by the elevation change of the
+  reference line (from `z0` and `slope`). Leave the end altitude out to let OpenCRG derive it.
+
+The MATLAB tools also expect `u0`, `du` and the positions `v` to be multiples of 1 mm.
 
 ```python
 import numpy as np
@@ -160,7 +180,18 @@ pycrg.write("road.crg", z, 0.05, v, headings, x0=500.0, y0=200.0, mods={})
 ```
 
 For a reference line given as points `x`, `y` spaced `du` apart, the headings are
-`np.arctan2(np.diff(y), np.diff(x))`.
+`np.arctan2(np.diff(y), np.diff(x))`. For measured points, the noise makes these headings jump (1 mm
+of noise on points 2 cm apart turns them by several degrees), so that the reference line fails the
+curvature test. Take the headings over a longer distance instead, for example over 1 m, and leave
+`end_xy` out, since the smoothed headings do not lead exactly to the last measured point:
+
+```python
+n = round(1.0 / du)                      # points per metre
+i = np.arange(len(x) - 1)                # the heading of segment i is the direction
+a = np.clip(i - n // 2, 0, len(x) - 1)   # from point a to point b around it
+b = np.clip(i + 1 + n // 2, 0, len(x) - 1)
+phi = np.arctan2(y[b] - y[a], x[b] - x[a])
+```
 
 ### Peaks and comparisons
 
@@ -321,7 +352,10 @@ reset of file references after a failure. pycrg applies these patches on top
 6. let a successful local curvature check pass the check, as in the OpenCRG MATLAB tools;
 7. report a diagnostic of straight reference lines at debug instead of warning level;
 8. refuse files without data records or with a single cross section, which crashed the loader;
-9. avoid an integer overflow in the `BORDER_MODE_REFLECT` evaluation far away from the data.
+9. avoid an integer overflow in the `BORDER_MODE_REFLECT` evaluation far away from the data;
+10. run the curvature tests of the check as specified and as in the MATLAB tools: the global test
+    unless `warn_curv_global` is 0 (it ran only when one of the options was 1, so not by default),
+    the local test when `warn_curv_local` is positive; a failure reports the curvature.
 
 ## Legal notice
 

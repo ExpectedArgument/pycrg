@@ -274,12 +274,39 @@ def test_local_curvature_check(write_road, numpy, nan_at_center):
         phi=0.05 * np.arange(40),
         opts={"warn_curv_global": 1, "warn_curv_local": 1},
         mods={},
+        check=nan_at_center,  # pycrg.write refuses the reference line otherwise
     )
     with DataSet.open(path) as dataset:
         assert dataset.check() is nan_at_center
         if not nan_at_center:
             with pytest.raises(OpenCRGCheckError, match="Local curvature test failed"):
                 dataset.check(raise_on_error=True)
+
+
+def test_global_curvature_check_by_default(write_road, numpy):
+    # the global test runs unless the file sets warn_curv_global to 0, as
+    # specified and as in the OpenCRG MATLAB tools; the local test only when
+    # warn_curv_local is positive
+    np = numpy
+    sharp = {"du": 0.1, "v": np.linspace(-3.0, 3.0, 7), "phi": 0.05 * np.arange(40), "mods": {}, "check": False}
+    path = write_road("default.crg", **sharp)
+    with pytest.raises(OpenCRGCheckError, match=r"Global curvature test failed.*curvature from 0 to 0\.4997"):
+        DataSet.open(path, check=True)
+    for name, opts, valid in [
+        ("on.crg", {"warn_curv_global": 1}, False),
+        ("off.crg", {"warn_curv_global": 0}, True),
+        ("default_value.crg", {"warn_curv_global": -1}, False),
+        ("no_local.crg", {"warn_curv_global": 1, "warn_curv_local": 0}, False),
+        ("local_only.crg", {"warn_curv_global": 0, "warn_curv_local": 1}, True),
+    ]:
+        with DataSet.open(write_road(name, opts=opts, **sharp)) as dataset:
+            assert dataset.check() is valid, name
+
+
+def test_curvature_options_are_checked(write_road):
+    path = write_road(opts={"warn_curv_local": -2})
+    with DataSet.open(path) as dataset, pytest.raises(OpenCRGCheckError, match="warn_curv_local"):
+        dataset.check(raise_on_error=True)
 
 
 def test_increments(crg_txt, write_road, numpy):
