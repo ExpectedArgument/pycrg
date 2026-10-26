@@ -4,6 +4,8 @@
 the conventions of the reference writer of the OpenCRG MATLAB tools
 (``crg_write`` / ``ipl_write``) and checks the rules the C loader relies on, so
 that the files load with OpenCRG (and therefore with :class:`pycrg.DataSet`).
+Like ``crg_write``, which runs the consistency check ``crg_check`` first, it
+also refuses a reference line and header data that this check rejects.
 
 Data formats (the ``#:`` line of ``$KD_DEFINITION``):
 
@@ -123,6 +125,12 @@ _INTEGER_OPTIONS = {
 
 _MAX_LINE = 72  # header record length of the IPL format
 
+# defaults of the options check_eps, check_inc and check_tol, and the tolerance
+# of WGS 84 distances (check_wgs) of the OpenCRG consistency check
+_CHECK_EPS = 1e-6
+_CHECK_INC = 1e-3
+_CHECK_WGS = 10.0
+
 
 def _numpy() -> Any:
     try:
@@ -221,10 +229,11 @@ def _finite_float(name: str, value: Any) -> float:
     return result
 
 
-def _keyword_entries(name: str, entries: Mapping[str | int, float], keywords: Mapping[str, int | None]) -> list[str]:
+def _keyword_values(
+    name: str, entries: Mapping[str | int, float], keywords: Mapping[str, int | None]
+) -> dict[str, float]:
     by_id = {value: key for key, value in keywords.items() if value is not None}
-    lines = []
-    seen = set()
+    values: dict[str, float] = {}
     for key, value in entries.items():
         if isinstance(key, int) and not isinstance(key, bool):
             if key not in by_id:
@@ -234,15 +243,208 @@ def _keyword_entries(name: str, entries: Mapping[str | int, float], keywords: Ma
             keyword = key.lower()
         else:
             raise ValueError(f"unknown {name} {key!r}; expected one of {sorted(keywords)}")
-        if keyword in seen:
+        if keyword in values:
             raise ValueError(f"{name} {keyword!r} given twice")
-        seen.add(keyword)
         number = _finite_float(f"{name} {keyword!r}", value)
-        integer = keyword in _INTEGER_OPTIONS
-        if integer and number != int(number):
+        if keyword in _INTEGER_OPTIONS and number != int(number):
             raise ValueError(f"{name} {keyword!r} must be an integer, not {number!r}")
-        lines.append(_header_line(keyword, number, integer))
-    return lines
+        values[keyword] = number
+    return values
+
+
+def _keyword_lines(values: Mapping[str, float]) -> list[str]:
+    return [_header_line(keyword, number, keyword in _INTEGER_OPTIONS) for keyword, number in values.items()]
+
+
+def _wgs84_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distance in m of two WGS 84 positions (in degrees) on the ellipsoid.
+
+    A port of ``crg_wgs84_dist`` of the OpenCRG MATLAB tools, the inverse
+    solution of Vincenty after Rainsford (``INVERSE`` of the NGS).
+    """
+    a = 6378137.0
+    f = 1.0 / 298.257223563
+    lat1, lon1, lat2, lon2 = (math.radians(value) for value in (lat1, lon1, lat2, lon2))
+    if abs(lat1 - lat2) < 2.220446049250313e-16 and abs(lon1 - lon2) < 2.220446049250313e-16:
+        return 0.0
+    r = 1.0 - f
+    tu1 = r * math.sin(lat1) / math.cos(lat1)
+    tu2 = r * math.sin(lat2) / math.cos(lat2)
+    cu1 = 1.0 / math.sqrt(tu1 * tu1 + 1.0)
+    su1 = cu1 * tu1
+    cu2 = 1.0 / math.sqrt(tu2 * tu2 + 1.0)
+    s = cu1 * cu2
+    baz = s * tu2
+    faz = baz * tu1
+    x = lon2 - lon1
+    for _ in range(100):  # converges in a few iterations except near antipodes
+        sx = math.sin(x)
+        cx = math.cos(x)
+        tu1 = cu2 * sx
+        tu2 = baz - su1 * cu2 * cx
+        sy = math.sqrt(tu1 * tu1 + tu2 * tu2)
+        cy = s * cx + faz
+        y = math.atan2(sy, cy)
+        sa = s * sx / sy
+        c2a = 1.0 - sa * sa
+        cz = faz + faz
+        if c2a > 0:
+            cz = cy - cz / c2a
+        e = 2.0 * cz * cz - 1.0
+        c = ((4.0 - 3.0 * c2a) * f + 4.0) * c2a * f / 16.0
+        d = x
+        x = ((e * cy * c + cz) * sy * c + y) * sa
+        x = (1.0 - c) * x * f + lon2 - lon1
+        if abs(d - x) <= 0.5e-13:
+            break
+    x = math.sqrt((1.0 / r / r - 1.0) * c2a + 1.0) + 1.0
+    x = (x - 2.0) / x
+    c = (x * x / 4.0 + 1.0) / (1.0 - x)
+    d = (0.375 * x * x - 1.0) * x
+    s = 1.0 - 2.0 * e
+    return ((((sy * sy * 4.0 - 3.0) * s * cz * d / 6.0 - e * cy) * d / 4.0 + cz) * sy * d + y) * c * a * r
+
+
+# --- consistency check ----------------------------------------------------------
+# The checks of the OpenCRG consistency check (crg_check of the MATLAB tools,
+# crgCheck of the C library) that concern the data write() computes the header
+# from; the options and modifiers are written as given.
+
+
+def _check_tolerances(options: Mapping[str, float]) -> tuple[float, float]:
+    """``check_eps`` and ``check_tol`` of the options; the defaults replace values
+    outside their range, which the check of the options reports."""
+    eps = options.get("check_eps", _CHECK_EPS)
+    if not 1e-6 <= eps <= 1e-2:
+        eps = _CHECK_EPS
+    inc = options.get("check_inc", _CHECK_INC)
+    if inc < _CHECK_INC * (1 - eps) or abs(round(inc / _CHECK_INC) * _CHECK_INC - inc) > eps * inc:
+        inc = _CHECK_INC
+    tol = options.get("check_tol", 0.1 * inc)
+    if not eps * inc <= tol <= 0.5 * inc:
+        tol = 0.1 * inc
+    return eps, tol
+
+
+def _check_end_point(end: tuple[float, float], computed: tuple[float, float], length: float, straight: bool) -> None:
+    # the C loader warns about a larger deviation (0.5 mm for a straight line);
+    # the MATLAB tools allow at least as much
+    tolerance = 1e-6 * length
+    explanation = " (1e-6 of its length)"
+    if straight and tolerance > 5e-4:
+        tolerance, explanation = 5e-4, ""
+    deviation = math.hypot(end[0] - computed[0], end[1] - computed[1])
+    if deviation > tolerance:
+        raise ValueError(
+            f"end_xy is {deviation:.3g} m away from the end of the reference line that phi and du give, "
+            f"({computed[0]:.6f}, {computed[1]:.6f}); OpenCRG accepts {tolerance:.3g} m{explanation}. "
+            "Leave end_xy out, or give headings that lead to it: the points of a reference line must be du apart"
+        )
+
+
+def _check_road(
+    road: Mapping[str, float],
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    eps: float,
+    tol: float,
+) -> None:
+    """The ``road`` entries as checked by OpenCRG (``crg_check_head``, ``crg_check_wgs84``)."""
+    for first, second in (
+        ("reference_line_offset_x", "reference_line_offset_y"),
+        ("reference_line_start_lon", "reference_line_start_lat"),
+        ("reference_line_end_lon", "reference_line_end_lat"),
+    ):
+        if (first in road) != (second in road):
+            raise ValueError(f"road entries {first!r} and {second!r} must be given together")
+    for end_key, start_key in (
+        ("reference_line_end_lon", "reference_line_start_lon"),
+        ("reference_line_end_alt", "reference_line_start_alt"),
+    ):
+        if end_key in road and start_key not in road:
+            raise ValueError(f"road entry {end_key!r} needs {start_key!r}")
+    limits = {
+        "reference_line_start_lon": 180.0,
+        "reference_line_start_lat": 90.0,
+        "reference_line_end_lon": 180.0,
+        "reference_line_end_lat": 90.0,
+        "reference_line_offset_phi": math.pi,
+    }
+    for key, limit in limits.items():
+        value = road.get(key)
+        if value is not None and abs(value) > limit * (1 + eps):
+            raise ValueError(f"road entry {key!r} must be from {-limit:g} to {limit:g}, not {value!r}")
+
+    # start and end in WGS 84 must match those in x/y/z (crg_check_wgs84)
+    if "reference_line_end_lon" in road:
+        dxy = math.hypot(end[0] - start[0], end[1] - start[1])
+        dll = _wgs84_distance(
+            road["reference_line_start_lat"],
+            road["reference_line_start_lon"],
+            road["reference_line_end_lat"],
+            road["reference_line_end_lon"],
+        )
+        allowed = max(eps * (dxy + dll) / 2, _CHECK_WGS)
+        if abs(dxy - dll) > allowed:
+            raise ValueError(
+                f"the start and end of the reference line are {dll:.6g} m apart in lon/lat but {dxy:.6g} m in x/y; "
+                f"OpenCRG accepts a difference of {allowed:.3g} m (lon is the longitude, lat the latitude)"
+            )
+    if "reference_line_end_alt" in road:
+        dz = end[2] - start[2]
+        dalt = road["reference_line_end_alt"] - road["reference_line_start_alt"]
+        allowed = max(eps * abs(dz + dalt) / 2, tol)
+        if dz * dalt < -tol * tol or abs(dz - dalt) > allowed:
+            raise ValueError(
+                f"reference_line_end_alt - reference_line_start_alt = {dalt:.6g} m differs from the elevation change "
+                f"of the reference line, {dz:.6g} m (from z0 and slope); OpenCRG accepts a difference of "
+                f"{allowed:.3g} m. Leave reference_line_end_alt out (OpenCRG derives it from the start altitude), "
+                "or give a slope that leads to it"
+            )
+
+
+def _check_curvature(
+    np: Any, headings: Any, du: float, u0: float, v: Any, z: Any, options: Mapping[str, float]
+) -> None:
+    """The curvature tests of OpenCRG (``crg_check_curvature``, ``crgCheck``).
+
+    The global test fails if a centre of curvature of the reference line lies
+    on the road, between its right and left border, where the road surface
+    overlaps itself; the local test then only counts centres on data (not NaN)
+    of their cross section.
+    """
+    if options.get("warn_curv_global", 1) == 0:
+        return
+    # curvature at the inner cross sections, as OpenCRG computes it from the
+    # points of the reference line (the cross product of adjacent segments)
+    curvature = np.sin(np.diff(headings)) / du
+    # the centre of curvature is on the road where curvature * v reaches 1
+    critical = np.maximum(curvature * v[0], curvature * v[-1]) >= 1.0
+    if not critical.any():
+        return
+    local = options.get("warn_curv_local", 0) > 0
+    if local:
+        with np.errstate(divide="ignore"):
+            centre = 1.0 / curvature
+        sections = np.flatnonzero((centre >= v[0]) & (centre <= v[-1]))
+        column = np.clip(np.searchsorted(v, centre[sections], side="right") - 1, 0, v.size - 2)
+        valid = ~np.isnan(z[sections + 1])
+        rows = np.arange(sections.size)
+        critical = np.zeros_like(critical)
+        critical[sections[valid[rows, column] & valid[rows, column + 1]]] = True
+        if not critical.any():
+            return
+    worst = int(np.argmax(np.where(critical, np.abs(curvature), 0.0)))
+    turn = math.degrees(math.asin(min(1.0, abs(float(curvature[worst])) * du)))
+    advice = "" if local else ", or if the road has no data (NaN) there, set the option warn_curv_local to 1"
+    raise ValueError(
+        f"the reference line curves too sharply for the width of the road at {int(critical.sum())} cross sections, "
+        f"the sharpest at u = {u0 + (worst + 1) * du:.6g} m: a curvature of {float(curvature[worst]):.4g} 1/m (radius "
+        f"{1.0 / abs(float(curvature[worst])):.4g} m, the heading turns by {turn:.3g} degrees within du = {du:g} m) "
+        f"puts the centre of curvature on the road (v from {float(v[0]):g} to {float(v[-1]):g} m). OpenCRG's "
+        "consistency check rejects this (curvature test): smooth the reference line, for example its x/y points "
+        f"before computing phi{advice}"
+    )
 
 
 def _segment_values(np: Any, name: str, values: Any, nu: int) -> Any:
@@ -255,6 +457,11 @@ def _segment_values(np: Any, name: str, values: Any, nu: int) -> Any:
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be finite")
     return array
+
+
+def _wrap_angles(np: Any, angles: Any) -> Any:
+    """Headings outside -pi to pi mapped into this range, which the MATLAB tools require."""
+    return np.where(np.abs(angles) > np.pi, np.remainder(angles + np.pi, 2 * np.pi) - np.pi, angles)
 
 
 def write(
@@ -276,12 +483,18 @@ def write(
     opts: Mapping[str | int, float] | None = None,
     mods: Mapping[str | int, float] | None = None,
     road: Mapping[str, float] | None = None,
+    check: bool = True,
 ) -> None:
     """Write an OpenCRG file (requires numpy).
 
     The road surface is a grid of ``nu`` cross sections (along the reference
     line, ``du`` apart, starting at ``u0``) by ``nv`` long sections (across the
     road, at the lateral positions ``v``, positive to the left).
+
+    Like the reference writer of the OpenCRG MATLAB tools, ``write`` refuses
+    data that the OpenCRG consistency check rejects (see ``check``): the
+    reference line must not curve so sharply that a centre of curvature lies
+    on the road, and ``end_xy`` and the WGS 84 entries of ``road`` must fit it.
 
     Args:
         path: the file to write (it is overwritten).
@@ -295,15 +508,20 @@ def write(
             for 0) gives a straight line. An array gives the heading of each of
             the ``nu - 1`` segments between consecutive cross sections; an array
             with ``nu`` entries is accepted as stored in CRG files, where the
-            first entry is not used.
+            first entry is not used. Headings are written from -pi to pi. The
+            heading must not change by more than about ``du`` divided by the
+            width of the road (left or right of the reference line) from one
+            segment to the next, see ``check``.
         u0: u of the first cross section.
         x0, y0: position of the start of the reference line.
         z0: elevation of the start of the reference line.
         end_xy: position of the end of the reference line. OpenCRG then
             integrates the headings from both ends, which removes the drift of
-            the single precision headings. By default it is computed from the
-            headings as stored, which gives the same result as integrating from
-            the start.
+            the single precision headings. It must be the end the headings lead
+            to, within 1e-6 of the length of the reference line; a measured end
+            point usually is not. By default it is computed from the headings
+            as stored, which gives the same result as integrating from the
+            start.
         slope: slope of the reference line (dz/du): a number, or one value per
             segment as for ``phi``. The reference line elevation is integrated
             from ``z0``.
@@ -322,10 +540,23 @@ def write(
             reference line to the origin. Pass ``{}`` to write an empty section,
             which keeps the data where it is.
         road: further ``$ROAD_CRG`` entries, for example geographic
-            coordinates of the start (see :data:`ROAD_KEYWORDS`).
+            coordinates of the start (see :data:`ROAD_KEYWORDS`). Longitude and
+            latitude come in pairs, and an end position needs the start
+            position. The end altitude must differ from the start altitude by
+            the elevation change of the reference line (from ``z0`` and
+            ``slope``); leave it out to let OpenCRG derive it.
+        check: refuse data that the OpenCRG consistency check rejects
+            (``crg_check`` of the MATLAB tools, which their ``crg_write`` runs
+            first, and :meth:`pycrg.DataSet.check`): an ``end_xy`` the headings
+            do not lead to, ``road`` entries that do not fit the reference line,
+            and a reference line with a centre of curvature on the road. The
+            curvature test follows the options ``warn_curv_global`` (0 skips
+            it) and ``warn_curv_local`` (1 accepts centres of curvature where
+            the road has no data). ``False`` writes such data anyway.
 
     Raises:
-        ValueError: the data breaks a rule of the CRG format.
+        ValueError: the data breaks a rule of the CRG format or, with
+            ``check``, fails the OpenCRG consistency check.
     """
     np = _numpy()
 
@@ -396,20 +627,24 @@ def write(
     road_lines: list[str] = []
 
     # --- reference line ---------------------------------------------------------
+    length = du * (nu - 1)
+    headings: Any = None
     if phi is None or np.ndim(phi) == 0:
         heading = 0.0 if phi is None else _finite_float("phi", phi)
+        if abs(heading) > math.pi:
+            heading = math.remainder(heading, 2 * math.pi)
         start_phi = end_phi = heading
-        length = du * (nu - 1)
         end_x = x0 + length * math.cos(heading)
         end_y = y0 + length * math.sin(heading)
     else:
-        headings = stored(_segment_values(np, "phi", phi, nu))
+        headings = stored(_wrap_angles(np, _segment_values(np, "phi", phi, nu)))
         start_phi = float(headings[0])
         end_phi = float(headings[-1])
         # the forward integration of the OpenCRG loader
         end_x = float(np.cumsum(np.concatenate(([x0], du * np.cos(headings))))[-1])
         end_y = float(np.cumsum(np.concatenate(([y0], du * np.sin(headings))))[-1])
         columns.append(("reference line phi,rad", np.concatenate(([np.nan], headings))))
+    computed_end = (end_x, end_y)
     if end_xy is not None:
         if len(end_xy) != 2:
             raise ValueError("end_xy must be a pair (x, y)")
@@ -477,11 +712,27 @@ def write(
         _header_line("reference_line_start_z", z0),
         _header_line("reference_line_end_z", end_z),
     ]
+    road_values: dict[str, float] = {}
     for key, value in (road or {}).items():
         keyword = str(key).lower()
         if keyword not in ROAD_KEYWORDS:
             raise ValueError(f"road entry {key!r} cannot be set; expected one of {ROAD_KEYWORDS}")
-        road_lines.append(_header_line(keyword, _finite_float(f"road entry {keyword!r}", value)))
+        if keyword in road_values:
+            raise ValueError(f"road entry {keyword!r} given twice")
+        road_values[keyword] = _finite_float(f"road entry {keyword!r}", value)
+    road_lines += [_header_line(keyword, value) for keyword, value in road_values.items()]
+
+    options = None if opts is None else _keyword_values("option", opts, OPTION_KEYWORDS)
+    modifiers = None if mods is None else _keyword_values("modifier", mods, MODIFIER_KEYWORDS)
+
+    # --- consistency check ------------------------------------------------------------
+    if check:
+        eps, tol = _check_tolerances(options or {})
+        if end_xy is not None:
+            _check_end_point((end_x, end_y), computed_end, length, straight=headings is None)
+        _check_road(road_values, (x0, y0, z0), (end_x, end_y, end_z), eps, tol)
+        if headings is not None:
+            _check_curvature(np, headings, du, u0, v_array, z_array, options or {})
 
     # --- header ---------------------------------------------------------------------
     if isinstance(comment, str):
@@ -497,10 +748,10 @@ def write(
             raise ValueError(f"comment lines must not start with '$': {line!r}")
 
     header = ["$CT", *comment_lines, "$"]
-    if opts is not None:
-        header += ["$ROAD_CRG_OPTS", *_keyword_entries("option", opts, OPTION_KEYWORDS), "$"]
-    if mods is not None:
-        header += ["$ROAD_CRG_MODS", *_keyword_entries("modifier", mods, MODIFIER_KEYWORDS), "$"]
+    if options is not None:
+        header += ["$ROAD_CRG_OPTS", *_keyword_lines(options), "$"]
+    if modifiers is not None:
+        header += ["$ROAD_CRG_MODS", *_keyword_lines(modifiers), "$"]
     header += ["$ROAD_CRG", *road_lines, "$"]
     header.append(f"* written by pycrg {__version__}")
     header += ["$KD_DEFINITION", f"#:{fmt}", f"U:reference line u,m,{u0!r},{du!r}"]
